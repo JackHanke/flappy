@@ -630,9 +630,16 @@
     (t.update = y),
     Object.defineProperty(t, "__esModule", { value: !0 });
 });
+
+// 
+
+
 document.addEventListener("contextmenu", function (e) {
   e.preventDefault();
 });
+
+// 
+
 var AddToScore = pc.createScript("addToScore");
 AddToScore.attributes.add("bird", { type: "entity" }),
   (AddToScore.prototype.initialize = function () {
@@ -644,6 +651,9 @@ AddToScore.attributes.add("bird", { type: "entity" }),
       e = this.entity.getPosition().x;
     e <= o && this.lastX > o && i.fire("game:addscore"), (this.lastX = e);
   });
+
+// 
+
 function storageAvailable(e) {
   try {
     var t = window[e],
@@ -653,6 +663,9 @@ function storageAvailable(e) {
     return !1;
   }
 }
+
+// 
+
 var Game = pc.createScript("game");
 Game.prototype.initialize = function () {
   var e = this.app;
@@ -789,6 +802,9 @@ Game.prototype.initialize = function () {
       this
     );
 };
+
+// 
+
 var Button = pc.createScript("button");
 Button.attributes.add("diplacement", { type: "number", default: 0.00390625 }),
   Button.attributes.add("event", { type: "string" }),
@@ -854,6 +870,9 @@ Button.attributes.add("diplacement", { type: "number", default: 0.00390625 }),
       t.fire(this.event),
       t.fire("game:audio", "Swoosh"));
   });
+
+//
+
 var Sparkle = pc.createScript("sparkle");
 Sparkle.attributes.add("radius", { type: "number", default: 1 }),
   (Sparkle.prototype.initialize = function () {
@@ -874,8 +893,11 @@ Sparkle.attributes.add("radius", { type: "number", default: 1 }),
         this
       );
   });
+
+// 
+
 var Bird = pc.createScript("bird");
-Bird.attributes.add("flapVelocity", { type: "number", default: 1 }),
+  Bird.attributes.add("flapVelocity", { type: "number", default: 1 }),
   Bird.attributes.add("gravity", { type: "number", default: 5 }),
   Bird.attributes.add("lowestHeight", { type: "number", default: -0.25 }),
   Bird.attributes.add("radius", { type: "number", default: 0.068 }),
@@ -1008,6 +1030,9 @@ Bird.attributes.add("flapVelocity", { type: "number", default: 1 }),
       }
     }
   });
+
+// 
+
 var CameraAspect = pc.createScript("cameraAspect");
 (CameraAspect.prototype.initialize = function () {
   this.currentOrthoHeight = this.entity.camera.orthoHeight;
@@ -1019,6 +1044,9 @@ var CameraAspect = pc.createScript("cameraAspect");
     r !== this.currentOrthoHeight &&
       ((this.entity.camera.orthoHeight = r), (this.currentOrthoHeight = r));
   });
+
+// 
+
 var Score = pc.createScript("score");
 Score.attributes.add("name", { type: "string", default: "score" }),
   Score.attributes.add("display", { type: "entity", array: !0 }),
@@ -1052,6 +1080,9 @@ Score.attributes.add("name", { type: "string", default: "score" }),
       this
     );
   });
+
+// 
+
 var PipeHeight = pc.createScript("pipeHeight");
 (PipeHeight.prototype.initialize = function () {
   var i = this.app;
@@ -1082,6 +1113,9 @@ var PipeHeight = pc.createScript("pipeHeight");
       (i = this.pipe3.getLocalPosition()),
       this.pipe3.setLocalPosition(i.x, this.heights[2], i.z);
   });
+
+// 
+
 var Scroll = pc.createScript("scroll");
 Scroll.attributes.add("startEvent", { type: "string", default: "start" }),
   Scroll.attributes.add("stopEvent", { type: "string", default: "stop" }),
@@ -1142,6 +1176,9 @@ Scroll.attributes.add("startEvent", { type: "string", default: "start" }),
         (this.entity.translateLocal(this.startX - this.endX, 0, 0),
         e.fire(this.cycleEvent)));
   });
+
+// 
+
 var Scoreboard = pc.createScript("scoreboard");
 Scoreboard.prototype.initialize = function () {
   var e = this.app,
@@ -1188,6 +1225,9 @@ Scoreboard.prototype.initialize = function () {
       this
     );
 };
+
+// 
+
 var Input = pc.createScript("input");
 Input.prototype.initialize = function () {
   var e = this.app,
@@ -1217,6 +1257,9 @@ Input.prototype.initialize = function () {
     ),
     window.addEventListener("touchend", release, { passive: !1 });
 };
+
+// 
+
 var Tween = pc.createScript("tween");
 Tween.attributes.add("tweens", {
   type: "json",
@@ -1501,11 +1544,17 @@ Tween.attributes.add("tweens", {
         .delay(a.delay)
         .start());
   });
+
+//
+
 var app = pc.Application.getApplication();
 app &&
   app.on("update", function (e) {
     TWEEN.update();
   });
+
+//
+
 var Enable = pc.createScript("enable");
 Enable.attributes.add("enableEvent", { type: "string" }),
   Enable.attributes.add("disableEvent", { type: "string" }),
