@@ -667,17 +667,30 @@ function storageAvailable(e) {
 // 
 
 var Game = pc.createScript("game");
+Game.attributes.add("train", { type: "boolean", default: true}),
 Game.prototype.initialize = function () {
   var e = this.app;
+  if (this.train === true) {
+    // begin game session
+    setTimeout(
+      function () {
+        e.fire("game:getready");
+      }.bind(this),
+      100
+    );
+  }
   (this.score = 0),
     (this.bestScore = 0),
     storageAvailable("localStorage") &&
       ((this.bestScore = localStorage.getItem("Flappy Bird Best Score")),
       null === this.bestScore && (this.bestScore = 0)),
+      
+    // (e.root.findByName("Game").findByName("Bird").enabled = !0),
+    
     e.on(
       "game:menu",
       function () {
-        e.fire("flash:black"),
+        // e.fire("flash:black"),
           setTimeout(function () {
             (e.root.findByName("Game Over Screen").enabled = !1),
               (e.root.findByName("Menu Screen").enabled = !0),
@@ -691,19 +704,30 @@ Game.prototype.initialize = function () {
     e.on(
       "game:getready",
       function () {
-        e.fire("flash:black"),
+        // e.fire("flash:black"),
           setTimeout(
             function () {
               (e.root.findByName("Menu Screen").enabled = !1),
-                (e.root.findByName("Game Screen").enabled = !0),
-                (this.score = 0),
-                e.fire("ui:score", this.score),
-                (e.root.findByName("Get Ready").sprite.enabled = !0),
-                (e.root.findByName("Tap").sprite.enabled = !0),
+              (this.score = 0),
+              e.fire("ui:score", this.score),
+              (e.root.findByName("Game Screen").enabled = !0);
+              if (this.train === false) {
+                // (e.root.findByName("Get Ready").sprite.enabled = !0),
+                // (e.root.findByName("Tap").sprite.enabled = !0);
+              }
                 (e.root.findByName("Game").findByName("Bird").enabled = !0);
-            }.bind(this),
-            250
-          );
+              }.bind(this),
+              250
+            );
+            if (this.train === true) {
+              // spoof first action to begin new game
+              setTimeout(
+              function () {
+                  e.fire('game:press', 50, 50);
+                }.bind(this),
+                250
+              );
+            }
       },
       this
     ),
@@ -733,22 +757,33 @@ Game.prototype.initialize = function () {
     e.on(
       "game:gameover",
       function () {
-        (e.root.findByName("Game Screen").enabled = !1),
-          (e.root.findByName("Game Over Screen").enabled = !0),
+        if (this.train === true) {
+          // immediately restart game
           e.fire("pipes:stop"),
           e.fire("ground:stop"),
-          e.fire("ui:fadeingameover"),
-          e.fire("ui:showscoreboard", this.score, this.bestScore),
-          this.score > this.bestScore &&
-            ((this.bestScore = this.score),
-            storageAvailable("localStorage") &&
-              localStorage.setItem(
-                "Flappy Bird Best Score",
-                this.score.toString()
-              )),
-          setTimeout(function () {
-            e.fire("game:audio", "Swoosh");
-          }, 500);
+          e.fire("game:menu"),
+          e.fire("game:getready")
+          e.fire("disable:getready")
+          e.fire("disable:tap")
+        }
+        else {
+          (e.root.findByName("Game Screen").enabled = !1),
+            (e.root.findByName("Game Over Screen").enabled = !0),
+            e.fire("pipes:stop"),
+            e.fire("ground:stop"),
+            e.fire("ui:fadeingameover"),
+            e.fire("ui:showscoreboard", this.score, this.bestScore),
+            this.score > this.bestScore &&
+              ((this.bestScore = this.score),
+              storageAvailable("localStorage") &&
+                localStorage.setItem(
+                  "Flappy Bird Best Score",
+                  this.score.toString()
+                )),
+            setTimeout(function () {
+              e.fire("game:audio", "Swoosh");
+            }, 500);
+        }
       },
       this
     ),
@@ -911,6 +946,8 @@ var Bird = pc.createScript("bird");
       (this.initialPos = this.entity.getPosition().clone()),
       (this.initialRot = this.entity.getRotation().clone()),
       (this.pipes = t.root.findByTag("pipe")),
+      (this.timer = 0),
+      (this.replayBuffer = []),
       t.on(
         "game:pause",
         function () {
@@ -970,12 +1007,49 @@ var Bird = pc.createScript("bird");
     (this.state = "dead"),
       (this.entity.sprite.speed = 0),
       i.fire("game:audio", "Hit"),
-      i.fire("flash:white"),
+      // i.fire("flash:white"),
       i.fire("game:gameover"),
       t &&
         setTimeout(function () {
           i.fire("game:audio", "Die");
         }, 500);
+  }),
+  (Bird.prototype.doAction = function () {
+    var i = this.app;
+
+    // state information
+    coords  = this.entity.getPosition();
+    bird_x = coords.x;
+    bird_y = coords.y;
+    console.log(`
+      Bird .x :${bird_x}
+      Bird .y :${bird_y}
+    `)
+
+    pipe1 = i.root.findByName("Pipe 1").getLocalPosition();
+    pipe2 = i.root.findByName("Pipe 2").getLocalPosition();
+    pipe3 = i.root.findByName("Pipe 3").getLocalPosition();
+
+    console.log(`
+      Pipe 1 .x :${pipe1.x}
+      Pipe 1 .y :${pipe1.y}
+      Pipe 2 .x :${pipe2.x}
+      Pipe 2 .y :${pipe2.y}
+      Pipe 3 .x :${pipe3.x}
+      Pipe 3 .y :${pipe3.y}
+      `
+    )
+
+    // random agent
+    if (Math.random() < 0.3){
+      setTimeout(
+        function () {
+            i.fire('game:press', 50, 50);
+          },
+        250
+      );
+    }
+    
   }),
   (Bird.prototype.circleRectangleIntersect = function (t, i) {
     var e = t.x,
@@ -998,6 +1072,7 @@ var Bird = pc.createScript("bird");
   (Bird.prototype.update = function (t) {
     var i = this.app;
     if (!this.paused) {
+      this.timer += t;
       var e = "play" === this.state,
         s = "dead" === this.state;
       e && i.keyboard.wasPressed(pc.KEY_SPACE) && this.flap();
@@ -1028,6 +1103,14 @@ var Bird = pc.createScript("bird");
             this.circleRectangleIntersect(o, n) && this.die(!0);
         }
       }
+      // every quarter second, do action
+      if (this.timer >= 0.25) {
+        // 
+        this.doAction()
+        // Reset the timer, but subtract the leftover time for accuracy
+        this.timer -= 0.25;
+      }
+    
     }
   });
 
