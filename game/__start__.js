@@ -39,8 +39,6 @@
     },
 
     resizeCanvas: function (app, canvas) {
-      console.log(`canvas width: ${canvas.width}`)
-      console.log(`canvas height: ${canvas.height}`)
       canvas.style.width = '';
       canvas.style.height = '';
       app.resizeCanvas(canvas.width, canvas.height);
