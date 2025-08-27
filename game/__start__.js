@@ -39,6 +39,8 @@
     },
 
     resizeCanvas: function (app, canvas) {
+      console.log(`canvas width: ${canvas.width}`)
+      console.log(`canvas height: ${canvas.height}`)
       canvas.style.width = '';
       canvas.style.height = '';
       app.resizeCanvas(canvas.width, canvas.height);
@@ -52,6 +54,11 @@
           canvas.style.marginTop = '';
         }
       }
+
+      // Set canvas size to a percentage of the window
+      const scaleFactor = 0.7; // Use 80% of the window size
+      canvas.style.width = `${window.innerWidth * (scaleFactor*2/3)}px`;
+      canvas.style.height = `${window.innerHeight * scaleFactor}px`;
 
       lastWindowHeight = window.innerHeight;
       lastWindowWidth = window.innerWidth;
@@ -120,7 +127,7 @@
     var css = "@media screen and (min-aspect-ratio: " + width + "/" + height + ") {";
     css += "    #application-canvas.fill-mode-KEEP_ASPECT {";
     css += "        width: auto;";
-    css += "        height: 100%;";
+    css += "        height: 1000%;";
     css += "        margin: 0 auto;";
     css += "    }";
     css += "}";

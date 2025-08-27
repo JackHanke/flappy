@@ -39,16 +39,17 @@
     
       gtag('config', 'G-FKC4TK8NTB');
     </script>
-    
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"> </script>
+
 </head>
 <body>
-    <div class="wrapper__content">
-        <section class="game" id="game">
-            <div class="game-holder"></div>
-        </section>
-
-        <script src="./playcanvas-stable.min.js"></script>
-        <script>    
+  <div class="parent">
+    <div class="gamebox">
+      <div class="game-holder"></div>
+      
+      <script src="./playcanvas-stable.min.js"></script>
+      <script>    
           ASSET_PREFIX = "./";
           SCRIPT_PREFIX = "./";
           SCENE_PATH = "404993.json";
@@ -65,7 +66,7 @@
             37186400
           ];
           CONFIG_FILENAME =
-            "./rl_config.json";
+          "./rl_config.json";
           INPUT_SETTINGS = {
             useKeyboard: true,
             useMouse: true,
@@ -74,9 +75,16 @@
           };
           pc.script.legacy = false;
           PRELOAD_MODULES = [];
-        </script>
-
-        <script src="./__start__.js"></script>
-        <script src="./__loading__3f71.js?v=1.1.1"></script>
+      </script>
+            
+      <script src="./__start__.js"></script>
+      <script src="./__loading__3f71.js?v=1.1.1"></script>
+    </div>
+    <div class="catbox">
+      <!-- <img src="./assets/up.jpg" style="width: 35vw; min-width: 330px;"> -->
+      <img id="myImage" src="./assets/up.jpg" alt="bongo", style="width: 35vw; min-width: 330px;">
+    </div>
+    <!-- <script src="./playcanvas-stable.min.js"></script> -->
+  </div>
 </body>
 </html>

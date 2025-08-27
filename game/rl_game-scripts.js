@@ -947,7 +947,15 @@ var Bird = pc.createScript("bird");
       (this.initialRot = this.entity.getRotation().clone()),
       (this.pipes = t.root.findByTag("pipe")),
       (this.timer = 0),
+      (this.reward = 0),
       (this.replayBuffer = []),
+      t.on(
+        "game:addscore",
+        function () {
+          this.reward++;
+        },
+        this
+      )
       t.on(
         "game:pause",
         function () {
@@ -1004,7 +1012,9 @@ var Bird = pc.createScript("bird");
   }),
   (Bird.prototype.die = function (t) {
     var i = this.app;
+    // TODO reward processing
     (this.state = "dead"),
+    (this.reward = 0),
       (this.entity.sprite.speed = 0),
       i.fire("game:audio", "Hit"),
       // i.fire("flash:white"),
@@ -1021,30 +1031,48 @@ var Bird = pc.createScript("bird");
     coords  = this.entity.getPosition();
     bird_x = coords.x;
     bird_y = coords.y;
-    console.log(`
-      Bird .x :${bird_x}
-      Bird .y :${bird_y}
-    `)
 
     pipe1 = i.root.findByName("Pipe 1").getLocalPosition();
     pipe2 = i.root.findByName("Pipe 2").getLocalPosition();
     pipe3 = i.root.findByName("Pipe 3").getLocalPosition();
+    ground = i.root.findByName("Ground").getLocalPosition();
 
     console.log(`
-      Pipe 1 .x :${pipe1.x}
+      Bird   .y :${bird_y}
+      Bird  vel :${this.velocity}
       Pipe 1 .y :${pipe1.y}
-      Pipe 2 .x :${pipe2.x}
       Pipe 2 .y :${pipe2.y}
-      Pipe 3 .x :${pipe3.x}
       Pipe 3 .y :${pipe3.y}
+      Ground .x :${ground.x}
+      Reward    :${this.reward}
       `
     )
 
+
+    var action = 0;
+    const myImageElement = document.getElementById("myImage");
+
     // random agent
     if (Math.random() < 0.3){
+      action = 1;
+    }
+
+    // take action
+    if (action === 1){
       setTimeout(
         function () {
             i.fire('game:press', 50, 50);
+            myImageElement.src = "assets/down.jpg";
+          },
+        250
+      );
+      
+    }
+    else {
+      myImageElement.src = "assets/up.jpg";
+      setTimeout(
+        function () {
+            myImageElement.src = "assets/up.jpg";
           },
         250
       );
@@ -1106,7 +1134,9 @@ var Bird = pc.createScript("bird");
       // every quarter second, do action
       if (this.timer >= 0.25) {
         // 
-        this.doAction()
+
+        this.doAction();
+        this.reward += 0.001;
         // Reset the timer, but subtract the leftover time for accuracy
         this.timer -= 0.25;
       }

@@ -1,4 +1,4 @@
-body {
+/* body {
   background-color:#000000;
   font-family:Helvetica,arial,sans-serif;
   -webkit-tap-highlight-color:transparent
@@ -26,4 +26,27 @@ body {
 }
 canvas:focus {
   outline:none
+} */
+
+
+.parent {
+    /* border: 3px solid red; */
+    padding: 20px;
+    display: flex;
+    /* flex-direction: column-reverse; */
 }
+.gamebox {
+    width: 50%;
+    /* float: left; */
+    padding: 20px;
+    /* border: 2px solid red; */
+}  
+.catbox {
+    width: 50%;
+    /* float: left; */
+    padding: 20px;
+    /* border: 2px solid red; */
+    /* flex-grow: 1; */
+    align-self: flex-end;
+    /* margin-top: auto; */
+}  
