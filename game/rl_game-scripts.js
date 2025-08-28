@@ -957,24 +957,6 @@ Sparkle.attributes.add("radius", { type: "number", default: 1 }),
 
     // loss: policyGradientLoss
 
-
-// compute rewards to go
-
-function rewards_to_go (rews) {
-  var n = rews.length;
-  rtgs = [];
-  for (let i=0; i<n; ++i){rtgs.push(0.0);}
-  for (let i=n-1; i>=0; --i) {
-    if (i === n-1) {
-      rtgs[i] = rews[i];
-    }
-    else{
-      rtgs[i] = rews[i] + rtgs[i+1];
-    }
-  }
-  return rtgs
-}
-
 // 
 
 var Bird = pc.createScript("bird");
@@ -984,13 +966,17 @@ var Bird = pc.createScript("bird");
   Bird.attributes.add("radius", { type: "number", default: 0.068 }),
   (Bird.prototype.initialize = function () {
     var t = this.app;
-    const policynet = tf.sequential({
+    this.policynet = tf.sequential({
         layers: [
             tf.layers.dense({inputShape: [6], units: 32, activation: 'relu'}),
             tf.layers.dense({units: 32, activation: 'relu'}),
             tf.layers.dense({units: 32, activation: 'relu'}),
             tf.layers.dense({units: 2}),
         ]
+    });
+    this.policynet.compile({
+      optimizer: 'adam',
+      loss: (labels, logits, reward_weights) => tf.losses.softmaxCrossEntropy(labels, logits, reward_weights)
     });
     // const valuenet = tf.sequential({
     //     layers: [
@@ -1013,14 +999,18 @@ var Bird = pc.createScript("bird");
     (this.initialRot = this.entity.getRotation().clone()),
     (this.pipes = t.root.findByTag("pipe")),
     (this.timer = 0),
-    (this.num_trajectory_samples = 3),
+    (this.actionFramerate = 250),
+    (this.actionSeconds = this.actionFramerate / 1000),
+    (this.num_trajectory_samples = 10),
+    (this.num_epochs=3),
+    (this.batch_size=32),
     (this.reward = 0),
+    (this.baseline = 0.007),
     (this.games = 0),
     (this.states = []),
     (this.trajectory_rewards = []),
     (this.rewards = []),
     (this.actions = []),
-    (this.policynet = policynet),
     (this.replayBuffer = []),
     t.on(
       "game:addscore",
@@ -1083,7 +1073,22 @@ var Bird = pc.createScript("bird");
       "play" === this.state &&
         (t.fire("game:audio", "Flap"), (this.velocity = this.flapVelocity)));
   }),
-  (Bird.prototype.doAction = async function () {
+  (Bird.prototype.rewards_to_go = function (rews) {
+    var n = rews.length;
+    var baseline = this.baseline;
+    rtgs = [];
+    for (let i=0; i<n; ++i){rtgs.push(0.0);}
+    for (let i=n-1; i>=0; --i) {
+      if (i === n-1) {
+        rtgs[i] = rews[i] - baseline;
+      }
+      else{
+        rtgs[i] = rews[i] + rtgs[i+1] - baseline;
+      }
+    }
+    return rtgs
+  }),
+  (Bird.prototype.doAction = function () {
     var i = this.app;
 
     // fetch relevant state information
@@ -1112,7 +1117,9 @@ var Bird = pc.createScript("bird");
     // )
 
     // use policy action to choose action
-    logits = await this.policynet.predict(state);
+    // console.log(`Inference Mem Before: ${tf.memory().numTensors}`)
+    logits = this.policynet.predict(state);
+    // console.log(`Inference Mem After: ${tf.memory().numTensors}`)
     temp = tf.multinomial(logits=logits,num_samples=1);
     action = tf.squeeze(temp, axis=1);
     const actionChoice = action.dataSync()[0];
@@ -1138,7 +1145,7 @@ var Bird = pc.createScript("bird");
             i.fire('game:press', 50, 50);
             myImageElement.src = "assets/down.jpg";
           },
-        250
+        this.actionFramerate
       );
     }
     else {
@@ -1147,7 +1154,7 @@ var Bird = pc.createScript("bird");
         function () {
             myImageElement.src = "assets/up.jpg";
           },
-        250
+        this.actionFramerate
       );
     }
     
@@ -1157,7 +1164,7 @@ var Bird = pc.createScript("bird");
     (this.games += 1);
 
     // reward-to-go processing
-    reward_weights = rewards_to_go(this.trajectory_rewards);
+    reward_weights = this.rewards_to_go(this.trajectory_rewards);
     for (let i=0; i<reward_weights.length; i++){
       this.rewards.push([reward_weights[i]]);
     }
@@ -1167,6 +1174,10 @@ var Bird = pc.createScript("bird");
     // if collected enough trajectory samples, learn
     if (this.num_trajectory_samples === 1 || (this.games % this.num_trajectory_samples) === 0){
       this.learn();
+      // const profile = await tf.profile(() => {
+      // });
+      // console.log(`doAction newBytes: ${profile.newBytes}`);
+      // console.log(`doAction newTensors: ${profile.newTensors}`);
     }
     (this.reward = 0),
     (this.state = "dead"),
@@ -1180,29 +1191,33 @@ var Bird = pc.createScript("bird");
       }, 500);
   }),
   (Bird.prototype.learn = async function () {
-    console.log(`1Mem: ${tf.memory().numTensors}`)
-    await tf.tidy(() => {
-      const state_data_tensor = tf.tensor(this.states);
-      const action_data_tensor = tf.tensor(this.actions);
-      const reward_data_tensor = tf.tensor(this.rewards);
+    const state_data_tensor = tf.tensor(this.states);
+    const action_data_tensor = tf.tensor(this.actions);
+    const reward_data_tensor = tf.tensor(this.rewards);
+    
+    
       
-      this.policynet.compile({
-        optimizer: 'adam',
-        loss: (labels, logits) => tf.losses.softmaxCrossEntropy(labels, logits, reward_data_tensor)
-      });
-      
-      this.policynet.fit(
+    await this.policynet.fit(
         state_data_tensor,
         action_data_tensor,
+        reward_data_tensor,
         {
-          epochs: 3,
-          batchSize: 32,
+          epochs: this.num_epochs,
+          batchSize: this.batch_size,
         }
       )
+      // .then(() => {
+      //   console.log(`Game ${this.games} training completed!`);
+
+      // });
+      state_data_tensor.dispose()
+      action_data_tensor.dispose()
+      reward_data_tensor.dispose()
       
-    });
+    // });
     
-    console.log(`6Mem: ${tf.memory().numTensors}`)
+    // logits.dispose()
+    // labels.dispose()
 
   }),
   (Bird.prototype.circleRectangleIntersect = function (t, i) {
@@ -1258,13 +1273,16 @@ var Bird = pc.createScript("bird");
         }
       }
       // every quarter second, do action
-      if (this.timer >= 0.25) {
+      if (this.timer >= this.actionSeconds) {
         // 
-
+        
         this.doAction();
+        
+        // console.log(`doAction byte usage over all kernels: ${profile.kernels.map(k => k.totalBytesSnapshot)}`);
+
         this.reward = 0.001;
         // Reset the timer, but subtract the leftover time for accuracy
-        this.timer -= 0.25;
+        this.timer -= this.actionSeconds;
       }
     
     }
