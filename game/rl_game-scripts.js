@@ -966,11 +966,12 @@ var Bird = pc.createScript("bird");
   Bird.attributes.add("radius", { type: "number", default: 0.068 }),
   (Bird.prototype.initialize = function () {
     var t = this.app;
+    (this.hidden_dim = 16),
     this.policynet = tf.sequential({
         layers: [
-            tf.layers.dense({inputShape: [6], units: 32, activation: 'relu'}),
-            tf.layers.dense({units: 32, activation: 'relu'}),
-            tf.layers.dense({units: 32, activation: 'relu'}),
+            tf.layers.dense({inputShape: [8], units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
+            tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
+            tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: 2}),
         ]
     });
@@ -999,19 +1000,23 @@ var Bird = pc.createScript("bird");
     (this.initialRot = this.entity.getRotation().clone()),
     (this.pipes = t.root.findByTag("pipe")),
     (this.timer = 0),
+    (this.totalTime = 0),
     (this.actionFramerate = 250),
     (this.actionSeconds = this.actionFramerate / 1000),
-    (this.num_trajectory_samples = 10),
-    (this.num_epochs=3),
+    (this.num_trajectory_samples = 15),
+    (this.num_epochs=5),
     (this.batch_size=32),
+    (this.frameReward = 0.001),
+    (this.bufferSize = 512),
+    (this.baseline = 0.0),
     (this.reward = 0),
-    (this.baseline = 0.007),
     (this.games = 0),
-    (this.states = []),
     (this.trajectory_rewards = []),
-    (this.rewards = []),
+    (this.states = []),
+    (this.statesBuffer = []),
     (this.actions = []),
-    (this.replayBuffer = []),
+    (this.actionsBuffer = []),
+    (this.rewards = []),
     t.on(
       "game:addscore",
       function () {
@@ -1075,15 +1080,14 @@ var Bird = pc.createScript("bird");
   }),
   (Bird.prototype.rewards_to_go = function (rews) {
     var n = rews.length;
-    var baseline = this.baseline;
     rtgs = [];
     for (let i=0; i<n; ++i){rtgs.push(0.0);}
     for (let i=n-1; i>=0; --i) {
       if (i === n-1) {
-        rtgs[i] = rews[i] - baseline;
+        rtgs[i] = rews[i] - this.baseline;
       }
       else{
-        rtgs[i] = rews[i] + rtgs[i+1] - baseline;
+        rtgs[i] = rews[i] + rtgs[i+1];
       }
     }
     return rtgs
@@ -1100,7 +1104,9 @@ var Bird = pc.createScript("bird");
     pipe3 = i.root.findByName("Pipe 3").getLocalPosition();
     ground = i.root.findByName("Ground").getLocalPosition();
 
-    state_array = [bird_y,this.velocity,pipe1.y,pipe2.y,pipe3.y,ground.x];
+    let timer_info = (this.timer - this.actionSeconds)*100
+
+    state_array = [bird_y,this.velocity,pipe1.y,pipe2.y,pipe3.y,ground.x, timer_info, this.totalTime];
     state = tf.tensor([state_array]);
     
     // console.log(`
@@ -1112,7 +1118,7 @@ var Bird = pc.createScript("bird");
     //   Pipe 3 .y : ${pipe3.y}
     //   Ground .x : ${ground.x}
     //   Reward    : ${this.reward}
-    //   Num Tensor: ${tf.memory().numTensors}
+    //   Timer Info: ${timer_info}
     //   `
     // )
 
@@ -1126,10 +1132,10 @@ var Bird = pc.createScript("bird");
     // append reward to individual trajectory array
     this.trajectory_rewards.push(this.reward);
     // append time step data to trajectory data
-    this.states.push(state_array);
+    this.statesBuffer.push(state_array);
     onehot_action = [0,0];
     onehot_action[actionChoice] = 1;
-    this.actions.push(onehot_action);
+    this.actionsBuffer.push(onehot_action);
     // clean up temps
     temp.dispose();
     logits.dispose();
@@ -1161,23 +1167,39 @@ var Bird = pc.createScript("bird");
   }),
   (Bird.prototype.die = function (t) {
     var i = this.app;
-    (this.games += 1);
+    (this.games += 1),
+    (this.totalTime = 0);
+
+    // this.trajectory_rewards.push(this.deathReward);
 
     // reward-to-go processing
     reward_weights = this.rewards_to_go(this.trajectory_rewards);
+    // 
+    this.states = this.states.concat(this.statesBuffer);
+    this.actions = this.actions.concat(this.actionsBuffer);
     for (let i=0; i<reward_weights.length; i++){
       this.rewards.push([reward_weights[i]]);
     }
-    console.log(`Game: ${this.games} | Mem: ${tf.memory().numTensors} | Return: ${reward_weights[0]}`);
+    // flush buffers
+    this.statesBuffer = [];
+    this.actionsBuffer = [];
+    // roll buffer if over buffersize
+    if (this.rewards.length > this.bufferSize) {
+      var excess_experience = this.rewards.length - this.bufferSize
+      this.rewards = this.rewards.slice(excess_experience)
+      this.states = this.states.slice(excess_experience)
+      this.actions = this.actions.slice(excess_experience)
+      // console.log(`States : ${this.states}`)
+    }
+    console.log(`Game: ${this.games} | Mem: ${tf.memory().numTensors} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
+    // console.log(`Game ${this.games} trajectory: ${this.trajectory_rewards}`)
+    // console.log(`Game ${this.games} weights: ${reward_weights}`)
     this.trajectory_rewards = [];
     
     // if collected enough trajectory samples, learn
-    if (this.num_trajectory_samples === 1 || (this.games % this.num_trajectory_samples) === 0){
+    if (this.states.length > 0 && (this.num_trajectory_samples === 1 || (this.games % this.num_trajectory_samples) === 0)){
       this.learn();
-      // const profile = await tf.profile(() => {
-      // });
-      // console.log(`doAction newBytes: ${profile.newBytes}`);
-      // console.log(`doAction newTensors: ${profile.newTensors}`);
+      console.log(`#############################################`)
     }
     (this.reward = 0),
     (this.state = "dead"),
@@ -1194,9 +1216,13 @@ var Bird = pc.createScript("bird");
     const state_data_tensor = tf.tensor(this.states);
     const action_data_tensor = tf.tensor(this.actions);
     const reward_data_tensor = tf.tensor(this.rewards);
+
+    // console.log(`
+    //   state_data_tensor.shape : ${state_data_tensor.shape}
+    //   action_data_tensor.shape: ${action_data_tensor.shape}
+    //   reward_data_tensor.shape: ${reward_data_tensor.shape}
+    //   `)
     
-    
-      
     await this.policynet.fit(
         state_data_tensor,
         action_data_tensor,
@@ -1204,20 +1230,19 @@ var Bird = pc.createScript("bird");
         {
           epochs: this.num_epochs,
           batchSize: this.batch_size,
+          shuffle: true
         }
-      )
-      // .then(() => {
-      //   console.log(`Game ${this.games} training completed!`);
+      ).then(() => {
+        // console.log(`## Game ${this.games} training completed ##`);
+        // console.log(`Weights 0: ${this.policynet.layers[0].getWeights()[0].shape}`);
+        // console.log(`Weights 1: ${this.policynet.layers[1].getWeights()[0].shape}`);
+        // console.log(`Weights 2: ${this.policynet.layers[2].getWeights()[0].shape}`);
+        // console.log(`Weights 3: ${this.policynet.layers[3].getWeights()[0].shape}`);
+      });
 
-      // });
-      state_data_tensor.dispose()
-      action_data_tensor.dispose()
-      reward_data_tensor.dispose()
-      
-    // });
-    
-    // logits.dispose()
-    // labels.dispose()
+      state_data_tensor.dispose();
+      action_data_tensor.dispose();
+      reward_data_tensor.dispose();
 
   }),
   (Bird.prototype.circleRectangleIntersect = function (t, i) {
@@ -1275,14 +1300,13 @@ var Bird = pc.createScript("bird");
       // every quarter second, do action
       if (this.timer >= this.actionSeconds) {
         // 
-        
         this.doAction();
-        
-        // console.log(`doAction byte usage over all kernels: ${profile.kernels.map(k => k.totalBytesSnapshot)}`);
-
-        this.reward = 0.001;
+        // 
+        this.reward = this.frameReward;
         // Reset the timer, but subtract the leftover time for accuracy
         this.timer -= this.actionSeconds;
+
+        (this.totalTime += 0.001)
       }
     
     }
