@@ -969,7 +969,8 @@ var Bird = pc.createScript("bird");
     (this.hidden_dim = 16),
     this.policynet = tf.sequential({
         layers: [
-            tf.layers.dense({inputShape: [5], units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
+            tf.layers.dense({inputShape: [6], units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
+            tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: 2}),
@@ -991,6 +992,7 @@ var Bird = pc.createScript("bird");
     //   optimizer: 'adam',
     //   loss: 'meanSquaredError'
     // });
+    this.plotWeights();
     (this.velocity = 0),
     (this.state = "getready"),
     (this.paused = !1),
@@ -1005,18 +1007,24 @@ var Bird = pc.createScript("bird");
     (this.actionSeconds = this.actionFramerate / 1000),
     (this.num_epochs=5),
     (this.batch_size=32),
-    (this.frameReward = 0),
+    (this.frameReward = 0.001),
     (this.bufferSize = 50),
     (this.replayBuffer = 150),
-    (this.baseline = 0.0),
+    (this.baseline = 0.01),
     (this.reward = 0),
     (this.games = 0),
+    (this.saveevery = 300),
     (this.trajectory_rewards = []),
     (this.states = []),
     (this.statesBuffer = []),
     (this.actions = []),
     (this.actionsBuffer = []),
     (this.rewards = []),
+    // sliding window of average rewards
+    (this.k = 20),
+    (this.average_of_last_k_rewards = 0);
+    const dimElement = document.getElementById('gameid');
+    dimElement.textContent = `${this.games}`;
     t.on(
       "game:addscore",
       function () {
@@ -1078,6 +1086,53 @@ var Bird = pc.createScript("bird");
       "play" === this.state &&
         (t.fire("game:audio", "Flap"), (this.velocity = this.flapVelocity)));
   }),
+  (Bird.prototype.plotWeights = async function () {
+        // combine weights to plot
+        var weights = tf.concat(
+          [
+            this.policynet.layers[1].getWeights()[0],
+            this.policynet.layers[2].getWeights()[0],
+
+          ]
+        ).transpose()
+        const [rows, cols] = weights.shape;
+        const tensorAsArray = await weights.array();
+
+        const trace = {
+            z: tensorAsArray,
+            type: 'heatmap',
+            zmin: -0.5,
+            zmax: 0.5,
+            colorscale: 'Viridis',
+            showscale: false
+        };
+
+        const plotDiv = document.getElementById('myPlot');
+
+        const layout = {
+            title: 'TensorFlow.js Tensor Heatmap',
+            xaxis: {
+              visible: false,
+              showgrid: false,
+              zeroline: false,
+              showticklabels: false,
+            },
+            yaxis: {
+              visible: false,
+              showgrid: false,
+              zeroline: false,
+              showticklabels: false,
+            },
+            margin: {
+              b: 20,
+              l: 0,
+              r: 30,
+              t: 0,
+            }
+        };
+
+        Plotly.newPlot(plotDiv, [trace], layout);
+  }),
   (Bird.prototype.rewards_to_go = function (rews) {
     var n = rews.length;
     rtgs = [];
@@ -1104,9 +1159,14 @@ var Bird = pc.createScript("bird");
     pipe3 = i.root.findByName("Pipe 3").getLocalPosition();
     ground = i.root.findByName("Ground").getLocalPosition();
 
-    let timer_info = (this.timer - this.actionSeconds)*100
-
-    state_array = [bird_y, this.velocity, pipe1.y, pipe2.y, pipe3.y];
+    if (this.reward < 1){
+      var beforeFirst = 0
+    }
+    else {
+      var beforeFirst = 1
+    }
+    
+    state_array = [bird_y, this.velocity, pipe1.y, pipe2.y, pipe3.y, beforeFirst];
     state = tf.tensor([state_array]);
     
     // console.log(`
@@ -1165,6 +1225,12 @@ var Bird = pc.createScript("bird");
     }
     
   }),
+
+  (Bird.prototype.checkpoint = async function () {
+    var path = `checkpoints/model-after-${this.games}-${String(new Date())}`;
+    const saveResult = await model.save(`localstorage://${path}`);
+    console.log(`### Model saved at: ${path} ###`);
+  }),
   (Bird.prototype.die = function (t) {
     var i = this.app;
     setTimeout(
@@ -1173,14 +1239,20 @@ var Bird = pc.createScript("bird");
           },
         this.actionFramerate
       );
-    (this.games += 1),
+
+    
+
+    (this.games += 1);
+    const dimElement = document.getElementById('gameid');
+    dimElement.textContent = `${this.games}`;
     (this.totalTime = 0);
 
     // this.trajectory_rewards.push(this.deathReward);
 
     // reward-to-go processing
     reward_weights = this.rewards_to_go(this.trajectory_rewards);
-    if (reward_weights[0] > 0){
+    // adds experience to replay buffer based on scale of return
+    if (Math.random() < reward_weights[0]+this.baseline){
       // 
       this.states = this.states.concat(this.statesBuffer);
       this.actions = this.actions.concat(this.actionsBuffer);
@@ -1202,10 +1274,19 @@ var Bird = pc.createScript("bird");
       }
 
       this.learn();
-      // this.rewards = [];
-      // this.states = [];
-      // this.actions = [];
+      
+      console.log(`### Trained for ${this.num_epochs} ###`);
+
+      this.plotWeights();
+      
     }
+    
+    // checkpoint every
+    if ((this.games % this.saveevery) === 0) {
+      this.checkpoint();
+
+    }
+
     this.trajectory_rewards = [];
     (this.reward = 0),
     (this.state = "dead"),

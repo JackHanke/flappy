@@ -40,10 +40,8 @@
       gtag('config', 'G-FKC4TK8NTB');
     </script>
 
-<!-- <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest"> </script> -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
-<!-- <script src="https://cdn.jsdelivr.net/npm/chart.js"></script> -->
-<!-- <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-heatmap@latest"></script> -->
+<script src="https://cdn.jsdelivr.net/npm/plotly.js-dist/plotly.min.js"></script>
 
 </head>
 <body>
@@ -84,11 +82,13 @@
       <script src="./__loading__3f71.js?v=1.1.1"></script>
     </div>
     <div class="catbox">
-      <canvas id="myChart" width="600" height="400"></canvas>
-      <!-- <img src="./assets/up.jpg" style="width: 35vw; min-width: 330px;"> -->
+      <div id="gamecounter" style="display: flex; justify-content: center; align-items: center; font-family: 'Roboto', sans-serif;">
+          <h1>Game <span id="gameid"></span></h1>
+      </div>
+      <div id="myPlot" style="margin: 0; padding: 0; height: 35vw;""></div>
+      <img id="thoughtbub" src="./assets/thoughtbubble.png" alt="thought", style="width: 35vw; min-width: 330px;">
       <img id="myImage" src="./assets/up.jpg" alt="bongo", style="width: 35vw; min-width: 330px;">
     </div>
-    <!-- <script src="./playcanvas-stable.min.js"></script> -->
   </div>
 </body>
 </html>
