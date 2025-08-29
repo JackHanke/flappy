@@ -969,7 +969,7 @@ var Bird = pc.createScript("bird");
     (this.hidden_dim = 16),
     this.policynet = tf.sequential({
         layers: [
-            tf.layers.dense({inputShape: [8], units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
+            tf.layers.dense({inputShape: [5], units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: this.hidden_dim, activation: 'relu', kernelRegularizer: tf.regularizers.l2({l2: 0.01})}),
             tf.layers.dense({units: 2}),
@@ -1003,11 +1003,11 @@ var Bird = pc.createScript("bird");
     (this.totalTime = 0),
     (this.actionFramerate = 250),
     (this.actionSeconds = this.actionFramerate / 1000),
-    (this.num_trajectory_samples = 15),
     (this.num_epochs=5),
     (this.batch_size=32),
-    (this.frameReward = 0.001),
-    (this.bufferSize = 512),
+    (this.frameReward = 0),
+    (this.bufferSize = 50),
+    (this.replayBuffer = 150),
     (this.baseline = 0.0),
     (this.reward = 0),
     (this.games = 0),
@@ -1106,7 +1106,7 @@ var Bird = pc.createScript("bird");
 
     let timer_info = (this.timer - this.actionSeconds)*100
 
-    state_array = [bird_y,this.velocity,pipe1.y,pipe2.y,pipe3.y,ground.x, timer_info, this.totalTime];
+    state_array = [bird_y, this.velocity, pipe1.y, pipe2.y, pipe3.y];
     state = tf.tensor([state_array]);
     
     // console.log(`
@@ -1126,7 +1126,7 @@ var Bird = pc.createScript("bird");
     // console.log(`Inference Mem Before: ${tf.memory().numTensors}`)
     logits = this.policynet.predict(state);
     // console.log(`Inference Mem After: ${tf.memory().numTensors}`)
-    temp = tf.multinomial(logits=logits,num_samples=1);
+    temp = tf.multinomial(logits=logits, num_samples=1);
     action = tf.squeeze(temp, axis=1);
     const actionChoice = action.dataSync()[0];
     // append reward to individual trajectory array
@@ -1167,6 +1167,12 @@ var Bird = pc.createScript("bird");
   }),
   (Bird.prototype.die = function (t) {
     var i = this.app;
+    setTimeout(
+        function () {
+            (i.fire("pipes:cycle"))
+          },
+        this.actionFramerate
+      );
     (this.games += 1),
     (this.totalTime = 0);
 
@@ -1174,33 +1180,33 @@ var Bird = pc.createScript("bird");
 
     // reward-to-go processing
     reward_weights = this.rewards_to_go(this.trajectory_rewards);
-    // 
-    this.states = this.states.concat(this.statesBuffer);
-    this.actions = this.actions.concat(this.actionsBuffer);
-    for (let i=0; i<reward_weights.length; i++){
-      this.rewards.push([reward_weights[i]]);
+    if (reward_weights[0] > 0){
+      // 
+      this.states = this.states.concat(this.statesBuffer);
+      this.actions = this.actions.concat(this.actionsBuffer);
+      for (let i=0; i<reward_weights.length; i++){
+        this.rewards.push([reward_weights[i]]);
+      }
+      console.log(`Game: ${this.games} | Mem: ${tf.memory().numTensors} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
     }
     // flush buffers
     this.statesBuffer = [];
     this.actionsBuffer = [];
     // roll buffer if over buffersize
     if (this.rewards.length > this.bufferSize) {
-      var excess_experience = this.rewards.length - this.bufferSize
-      this.rewards = this.rewards.slice(excess_experience)
-      this.states = this.states.slice(excess_experience)
-      this.actions = this.actions.slice(excess_experience)
-      // console.log(`States : ${this.states}`)
-    }
-    console.log(`Game: ${this.games} | Mem: ${tf.memory().numTensors} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
-    // console.log(`Game ${this.games} trajectory: ${this.trajectory_rewards}`)
-    // console.log(`Game ${this.games} weights: ${reward_weights}`)
-    this.trajectory_rewards = [];
-    
-    // if collected enough trajectory samples, learn
-    if (this.states.length > 0 && (this.num_trajectory_samples === 1 || (this.games % this.num_trajectory_samples) === 0)){
+      if (this.rewards.length > this.replayBuffer) {
+        var excess_experience = this.rewards.length - this.replayBuffer;
+        this.rewards = this.rewards.slice(excess_experience);
+        this.states = this.states.slice(excess_experience);
+        this.actions = this.actions.slice(excess_experience);
+      }
+
       this.learn();
-      console.log(`#############################################`)
+      // this.rewards = [];
+      // this.states = [];
+      // this.actions = [];
     }
+    this.trajectory_rewards = [];
     (this.reward = 0),
     (this.state = "dead"),
     (this.entity.sprite.speed = 0),
@@ -1368,22 +1374,22 @@ var PipeHeight = pc.createScript("pipeHeight");
 (PipeHeight.prototype.initialize = function () {
   var i = this.app;
   (this.pipe1 = i.root.findByName("Pipe 1")),
-    (this.pipe2 = i.root.findByName("Pipe 2")),
-    (this.pipe3 = i.root.findByName("Pipe 3")),
-    (this.heights = []),
-    this.heights.push(0.8 * (Math.random() - 0.5) + 0.1),
-    this.heights.push(0.8 * (Math.random() - 0.5) + 0.1),
-    this.heights.push(0.8 * (Math.random() - 0.5) + 0.1),
-    this.setPipeHeights(),
-    i.on(
-      "pipes:cycle",
-      function () {
-        this.heights.shift(),
-          this.heights.push(0.75 * (Math.random() - 0.5)),
-          this.setPipeHeights();
-      },
-      this
-    );
+  (this.pipe2 = i.root.findByName("Pipe 2")),
+  (this.pipe3 = i.root.findByName("Pipe 3")),
+  (this.heights = []),
+  this.heights.push(0.8 * (Math.random() - 0.5) + 0.1),
+  this.heights.push(0.8 * (Math.random() - 0.5) + 0.1),
+  this.heights.push(0.8 * (Math.random() - 0.5) + 0.1),
+  this.setPipeHeights(),
+  i.on(
+    "pipes:cycle",
+    function () {
+      this.heights.shift(),
+        this.heights.push(0.75 * (Math.random() - 0.5)),
+        this.setPipeHeights();
+    },
+    this
+  );
 }),
   (PipeHeight.prototype.setPipeHeights = function () {
     var i;
