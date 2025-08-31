@@ -970,10 +970,6 @@ var Bird = pc.createScript("bird");
   (this.policynet.summary()),
   // cpu time since init, updated on bird.update, for deciding when to collect state data
   (this.timer = 0),
-  // total time tracker for each game
-  (this.gametimer = 0),
-  // the value each frame we take an action 
-  (this.gametimervalue = 0.001),
   // number of milli(seconds) each (state, action) pair is collected
   (this.actionFramerate = 200),
   (this.actionSeconds = this.actionFramerate / 1000),
@@ -986,7 +982,9 @@ var Bird = pc.createScript("bird");
   // number of new trajectories before training
   (this.num_new_datapoints = 0),
   // gradient updates every trainEvery games
-  (this.trainEvery = 200),
+  (this.trainAndSaveEvery = 200),
+  // number of trajectory datapoints to train on
+  (this.replayBuffer = 2500),
   // reward tracker
   (this.reward = 0),
   // number of games
@@ -995,8 +993,6 @@ var Bird = pc.createScript("bird");
   (this.birdScore = 0),
   // best score in game session
   (this.bestScore = 0),
-  // checkpoint every saveEvery games
-  (this.saveEvery = 500),
   // conduct network inference instead of sampling 
   (this.inferenceEvery = 20),
   // individual trajectory rewards tracker
@@ -1159,6 +1155,8 @@ var Bird = pc.createScript("bird");
     pipe2 = i.root.findByName("Pipe 2").getLocalPosition();
     pipe3 = i.root.findByName("Pipe 3").getLocalPosition();
     ground = i.root.findByName("Ground").getLocalPosition();
+    pipes = i.root.findByName("Pipes").getLocalPosition();
+    // scroll_x = this.scrollEntity.script.scrollgetXPosition();
 
     // this doesnt work with baselining!
     // if (this.reward < 1){
@@ -1168,11 +1166,13 @@ var Bird = pc.createScript("bird");
     //   var beforeFirst = 1;
     // }
     
-    state_array = [bird_y, this.velocity, pipe1.y, pipe2.y, pipe3.y, this.gametimer];
+    state_array = [bird_y, this.velocity, pipe1.y, pipe2.y, pipe3.y, pipes.x];
     state = tf.tensor([state_array]);
     
     // console.log(`
     //   Game      : ${this.games}
+    //   Pipes  .x : ${pipes.x}
+    //   Bird   .x : ${coords.x}
     //   Bird   .y : ${bird_y}
     //   Bird  vel : ${this.velocity}
     //   Pipe 1 .y : ${pipe1.y}
@@ -1182,7 +1182,8 @@ var Bird = pc.createScript("bird");
     //   Reward    : ${this.reward}
     //   `
     // )
-    // console.log(`Game : ${this.games} Pipe .x : ${pipe1.x}`)
+
+    
     // beforeFrst: ${beforeFirst}
 
     // use policy action to choose action
@@ -1215,6 +1216,7 @@ var Bird = pc.createScript("bird");
     onehot_action = [0,0];
     onehot_action[actionChoice] = 1;
     this.actionsBuffer.push(onehot_action);
+
     // var action = 0;
     const myImageElement = document.getElementById("myImage");
     // take action
@@ -1259,48 +1261,46 @@ var Bird = pc.createScript("bird");
 
     // reward-to-go processing
     reward_weights = this.rewards_to_go(this.trajectory_rewards);
+    // console.log(`reward_weights: ${reward_weights} trajectory: ${this.trajectory_rewards}`)
     
     // adds experience to replay buffer based on scale of return
-    // if (reward_weights[0] > 0){
-    // 
     if (reward_weights[0] === undefined){
       console.log(`Undefined reward! traj: ${this.trajectory} reward_weights: ${reward_weights}`);
     }
     else{
-      // console.log(`this.frameReward : ${this.frameReward} this.frameReward !== 0 : ${this.frameReward !== 0}`)
-      if (this.frameReward !== 0) {
-        if (Math.random() < Math.abs(reward_weights[0])) {
-          // if (reward_weights[0] < 0) {
-          this.states = this.states.concat(this.statesBuffer);
-          this.actions = this.actions.concat(this.actionsBuffer);
-          for (let i=0; i<reward_weights.length; i++){
-            this.rewards.push([reward_weights[i]]);
-          }
-          this.num_new_datapoints += reward_weights.length;
-          if ((this.games % this.inferenceEvery) === 0) {
-            console.log(`*Game: ${this.games} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
-          }
-          else {
-            console.log(`Game: ${this.games} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
-          }
+      // add trajectory to replay buffer proportionally to the size of the reward
+      if (Math.random() < Math.abs(reward_weights[0])) {
+        this.states = this.states.concat(this.statesBuffer);
+        this.actions = this.actions.concat(this.actionsBuffer);
+        for (let i=0; i<reward_weights.length; i++){
+          this.rewards.push([reward_weights[i]]);
+        }
+        this.num_new_datapoints += reward_weights.length;
+        if ((this.games % this.inferenceEvery) === 0) {
+          console.log(`*Game: ${this.games} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
+        }
+        else {
+          console.log(`Game: ${this.games} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
         }
       }
     }
-    // }
-    // }
+
     // flush buffers
     this.statesBuffer = [];
     this.actionsBuffer = [];
-    // roll buffer if over buffersize
-    // if (this.rewards.length > this.bufferSize) {
-    //   if (this.rewards.length > this.replayBuffer) {
-    //     var excess_experience = this.rewards.length - this.replayBuffer;
-    //     this.rewards = this.rewards.slice(excess_experience);
-    //     this.states = this.states.slice(excess_experience);
-    //     this.actions = this.actions.slice(excess_experience);
-    //   }
 
-    if (this.num_new_datapoints >= this.trainEvery){
+    // roll buffer if over buffersize
+    if (this.rewards.length > this.replayBuffer) {
+        var excess_experience = this.rewards.length - this.replayBuffer;
+        this.rewards = this.rewards.slice(excess_experience);
+        this.states = this.states.slice(excess_experience);
+        this.actions = this.actions.slice(excess_experience);
+    }
+
+    // save and train every time this.num_new_datapoints
+    if (this.num_new_datapoints >= this.trainAndSaveEvery){
+      this.checkpoint();
+
       this.learn();
       
       console.log(`### Trained for ${this.num_epochs} epochs ###`);
@@ -1309,9 +1309,6 @@ var Bird = pc.createScript("bird");
 
       this.num_new_datapoints = 0;
 
-    }
-    if ((this.games % this.saveEvery) === 0){
-      this.checkpoint();
     }
 
     this.trajectory_rewards = [];
@@ -1367,6 +1364,7 @@ var Bird = pc.createScript("bird");
   }),
   (Bird.prototype.update = function (t) {
     var i = this.app;
+
     if (!this.paused) {
       this.timer += t;
       var e = "play" === this.state,
@@ -1407,7 +1405,6 @@ var Bird = pc.createScript("bird");
         this.reward = this.frameReward;
         // Reset the timer, but subtract the leftover time for accuracy
         this.timer -= this.actionSeconds;
-        this.gametimer += this.gametimervalue;
 
       }
     
@@ -1558,6 +1555,9 @@ Scroll.attributes.add("startEvent", { type: "string", default: "start" }),
       this.entity.getLocalPosition().x < this.endX &&
         (this.entity.translateLocal(this.startX - this.endX, 0, 0),
         e.fire(this.cycleEvent)));
+  });
+  (Scroll.prototype.getXPosition = function() {
+      return this.entity.getLocalPosition().x;
   });
 
 // 
