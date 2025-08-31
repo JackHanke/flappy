@@ -8,6 +8,10 @@ To play, run the following command in the `game` directory:
 
 `python3 -m http.server`
 
+or
+
+`npx http_server`
+
 and open `http://localhost:8000/rl.html` in your browser.
 
 ## Blurb
