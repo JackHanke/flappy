@@ -949,14 +949,15 @@ var Bird = pc.createScript("bird");
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
   // training hyperparameters
-  (this.num_epochs=1),
+  (this.num_epochs=2),
   (this.batch_size=512),
   (this.lambda=0.01),
   // network architecture
-  (this.hidden_dim = 16),
+  (this.input_dim = 3),
+  (this.hidden_dim = 8),
   this.policynet = tf.sequential({
     layers: [
-        tf.layers.dense({inputShape: [6], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
         tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
         tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
         tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
@@ -974,19 +975,25 @@ var Bird = pc.createScript("bird");
   (this.actionFramerate = 200),
   (this.actionSeconds = this.actionFramerate / 1000),
   // reward for surviving each frame
-  (this.frameReward = -0.0005),
+  (this.frameReward = 0.001),
   // reward for successfully passing though the pipe, aka getting a point
-  (this.pipeReward = -1),
+  (this.pipeReward = 1),
+  //
+  (this.tooHighReward = -0.02),
+  // reward for dying
+  (this.deathReward = -10),
   // value subtracted from each reward, regardless of state
-  (this.baseline = -0.005),
+  (this.baseline = 0),
   // number of new trajectories before training
   (this.num_new_datapoints = 0),
   // gradient updates every trainEvery games
-  (this.trainAndSaveEvery = 200),
+  (this.trainAndSaveEvery = 250),
   // number of trajectory datapoints to train on
   (this.replayBuffer = 2500),
   // reward tracker
   (this.reward = 0),
+  // reward discout
+  (this.discount = 0.999),
   // number of games
   (this.games = 0),
   // score tracking for the bird
@@ -1137,55 +1144,62 @@ var Bird = pc.createScript("bird");
     for (let i=0; i<n; ++i){rtgs.push(0.0);}
     for (let i=n-1; i>=0; --i) {
       if (i === n-1) {
-        rtgs[i] = rews[i] - this.baseline;
+        rtgs[i] = rews[i] * (this.discount)**i;
       }
       else{
-        rtgs[i] = rews[i] + rtgs[i+1];
+        rtgs[i] = (rews[i] + rtgs[i+1])* (this.discount)**i;
       }
     }
     return rtgs
   }),
-  (Bird.prototype.doAction = function () {
+  (Bird.prototype.getStateInfo = function (bird_y) {
     var i = this.app;
 
-    // fetch relevant state information
-    coords  = this.entity.getPosition();
-    bird_y = coords.y;
     pipe1 = i.root.findByName("Pipe 1").getLocalPosition();
     pipe2 = i.root.findByName("Pipe 2").getLocalPosition();
-    pipe3 = i.root.findByName("Pipe 3").getLocalPosition();
     ground = i.root.findByName("Ground").getLocalPosition();
     pipes = i.root.findByName("Pipes").getLocalPosition();
-    // scroll_x = this.scrollEntity.script.scrollgetXPosition();
+  
+    // treadmill logic to get next pipe
+    if (this.birdScore === 0){next_pipe_height = pipe1.y;}
+    else if (this.birdScore === 1) {next_pipe_height = pipe2.y;}
+    else {next_pipe_height = pipe2.y;}
 
-    // this doesnt work with baselining!
-    // if (this.reward < 1){
-    //   var beforeFirst = 0;
-    // }
-    // else {
-    //   var beforeFirst = 1;
-    // }
+    state_array = [bird_y, next_pipe_height, pipes.x];
+
+    verbose = true
+    if (verbose == true) {
+      console.log(`
+        Game      : ${this.games}
+        Pipes  .x : ${pipes.x}
+        Bird   .y : ${bird_y}
+        Bird  vel : ${this.velocity}
+        NexPipe.y : ${next_pipe_height}
+        Pipe 1 .y : ${pipe1.y}
+        Pipe 2 .y : ${pipe2.y}
+        Reward    : ${this.reward}
+        `
+      );
+    }
+
+    return state_array
+  }),
+  (Bird.prototype.doAction = function () {
+    coords = this.entity.getPosition();
+    bird_y = coords.y;
+
+    // 
+    this.reward = this.frameReward;
+    // if bird is too high, add negative reward
+    if (bird_y > 1.0) {
+      this.reward += this.tooHighReward
+    }
     
-    state_array = [bird_y, this.velocity, pipe1.y, pipe2.y, pipe3.y, pipes.x];
+    state_array = this.getStateInfo(bird_y);
+
     state = tf.tensor([state_array]);
-    
-    // console.log(`
-    //   Game      : ${this.games}
-    //   Pipes  .x : ${pipes.x}
-    //   Bird   .x : ${coords.x}
-    //   Bird   .y : ${bird_y}
-    //   Bird  vel : ${this.velocity}
-    //   Pipe 1 .y : ${pipe1.y}
-    //   Pipe 2 .y : ${pipe2.y}
-    //   Pipe 3 .y : ${pipe3.y}
-    //   Ground .x : ${ground.x}
-    //   Reward    : ${this.reward}
-    //   `
-    // )
 
     
-    // beforeFrst: ${beforeFirst}
-
     // use policy action to choose action
     logits = this.policynet.predict(state);
 
@@ -1193,7 +1207,7 @@ var Bird = pc.createScript("bird");
     if ((this.games % this.inferenceEvery) === (this.inferenceEvery - 1)) {
       var actionChoice = tf.argMax(logits, axis=1).dataSync()[0];
       tempSoft = tf.softmax(logits);
-      // console.log(`softmax(logits) = ${tempSoft} actionChoice = ${actionChoice}`);
+      // console.log(`softmax(logits) = ${tempSoft.arraySync()} actionChoice = ${actionChoice}`);
       tempSoft.dispose();
     }
     else {
@@ -1207,10 +1221,8 @@ var Bird = pc.createScript("bird");
     state.dispose();
     action.dispose();
 
-    // console.log(`Game: ${this.games} State: ${state_array}`);
-
     // append reward to individual trajectory array
-    this.trajectory_rewards.push(this.reward);
+    this.trajectory_rewards.push(this.reward - this.baseline);
     // append time step data to trajectory data
     this.statesBuffer.push(state_array);
     onehot_action = [0,0];
@@ -1221,7 +1233,7 @@ var Bird = pc.createScript("bird");
     const myImageElement = document.getElementById("myImage");
     // take action
     if (actionChoice === 1){
-      this.flap();
+      // this.flap();
       // myImageElement.src = "assets/down.jpg";
       setTimeout(
         function () {
@@ -1252,6 +1264,7 @@ var Bird = pc.createScript("bird");
   (Bird.prototype.die = function (t) {
     var i = this.app;
 
+    // 
     (this.games += 1);
     if (this.score > this.bestScore){
       this.bestScore = this.score;
@@ -1259,9 +1272,22 @@ var Bird = pc.createScript("bird");
     const dimElement = document.getElementById('gameid');
     dimElement.textContent = `${this.games}`;
 
+    // add death state, action, reward to trajectory
+    state_array = this.getStateInfo();
+    this.statesBuffer.push(state_array);
+
+    onehot_action = [0,0];
+    onehot_action[0] = 1;
+    this.actionsBuffer.push(onehot_action);
+
+    reward = this.deathReward
+    this.trajectory_rewards.push(reward);
+
+
     // reward-to-go processing
     reward_weights = this.rewards_to_go(this.trajectory_rewards);
-    // console.log(`reward_weights: ${reward_weights} trajectory: ${this.trajectory_rewards}`)
+
+    console.log(`reward_weights: ${reward_weights} trajectory: ${this.trajectory_rewards}`)
     
     // adds experience to replay buffer based on scale of return
     if (reward_weights[0] === undefined){
@@ -1269,11 +1295,13 @@ var Bird = pc.createScript("bird");
     }
     else{
       // add trajectory to replay buffer proportionally to the size of the reward
-      if (Math.random() < Math.abs(reward_weights[0])) {
+      // if (Math.random() < Math.abs(reward_weights[0])) {
+      if (true) {
         this.states = this.states.concat(this.statesBuffer);
         this.actions = this.actions.concat(this.actionsBuffer);
         for (let i=0; i<reward_weights.length; i++){
-          this.rewards.push([reward_weights[i]]);
+          // the following -1 is to gradient ascend instead of descend in tf's .fit method
+          this.rewards.push([-1 * reward_weights[i]]);
         }
         this.num_new_datapoints += reward_weights.length;
         if ((this.games % this.inferenceEvery) === 0) {
@@ -1335,7 +1363,8 @@ var Bird = pc.createScript("bird");
         {
           epochs: this.num_epochs,
           batchSize: this.batch_size,
-          shuffle: true
+          shuffle: true,
+          verbose: 1
         }
       );
 
@@ -1401,8 +1430,6 @@ var Bird = pc.createScript("bird");
       if (this.timer >= this.actionSeconds) {
         // 
         this.doAction();
-        // 
-        this.reward = this.frameReward;
         // Reset the timer, but subtract the leftover time for accuracy
         this.timer -= this.actionSeconds;
 
