@@ -932,6 +932,260 @@ Sparkle.attributes.add("radius", { type: "number", default: 1 }),
 
 // 
 
+// 
+function Buffer() {
+    // discount
+    this.discount = 1;
+    this.reset();
+}
+
+
+// 
+(Buffer.prototype.add = function () {
+    this.observationBuffer.push(observation.slice(0))
+    this.actionBuffer.push(action)
+    this.rewardBuffer.push(reward)
+    this.valueBuffer.push(value)
+    this.logprobabilityBuffer.push(logprobability)
+}),
+
+//
+(Buffer.prototype.reset = function () {
+    this.observationBuffer = []
+    this.actionBuffer = []
+    this.advantageBuffer = []
+    this.rewardBuffer = []
+    this.returnBuffer = []
+    this.valueBuffer = []
+    this.logprobabilityBuffer = []
+}),
+
+//
+(Buffer.prototype.finishTrajectory = function () {
+}),
+
+//
+(Buffer.prototype.get = function () {
+}),
+
+//
+(Buffer.prototype.rewards_to_go = function (rews) {
+    var n = rews.length;
+    rtgs = [];
+    for (let i=0; i<n; ++i){rtgs.push(0.0);}
+    for (let i=n-1; i>=0; --i) {
+        if (i === n-1) {
+        rtgs[i] = rews[i] * (this.discount)**i;
+        }
+        else{
+        rtgs[i] = (rews[i] + rtgs[i+1])* (this.discount)**i;
+        }
+    }
+    return rtgs
+});
+
+
+
+/*
+Terminology:
+the actor is the policy
+the critic is the value estimator
+a trajectory is a 
+an iteration is 
+*/
+
+// PPO class modified from https://github.com/zemlyansky/ppo-tfjs
+function PPO() {
+
+    this.buffer = new Buffer();
+
+    // configure networks
+    this.input_dim = 3;
+    this.hidden_dim = 8;
+    this.actor = tf.sequential({
+    layers: [
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: 2}),
+        ]
+    });
+    this.critic = tf.sequential({
+    layers: [
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: 1}),
+    ]
+    });
+
+    // configure optimizers
+    this.optPolicy = tf.train.adam(1e-3);
+    this.optValue = tf.train.adam(1e-3);
+
+    // training hyperparameters
+    this.num_epochs=10;
+    this.batch_size=512;
+    this.lambda=0.01;
+
+}
+
+// 
+(PPO.prototype.sampleAction = function (observationT) {
+    return tf.tidy(() => {
+        logits = this.actor.predict(observationT);
+        action = tf.squeeze(tf.multinomial(logits=logits, num_samples=1), axis=1);
+        return [logits, action]
+    })
+}),
+
+// 
+(PPO.prototype.trainPolicy = function (observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT) {
+    const optFunc = () => {
+        const predsT = this.actor.predict(observationBufferT) // -> Logits or means
+        const diffT = tf.sub(
+            this.logProb(predsT, actionBufferT),
+            logprobabilityBufferT
+        )
+        const ratioT = tf.exp(diffT)
+        const minAdvantageT = tf.where(
+            tf.greater(advantageBufferT, 0),
+            tf.mul(tf.add(1, this.config.clipRatio), advantageBufferT),
+            tf.mul(tf.sub(1, this.config.clipRatio), advantageBufferT)
+        )
+        const policyLoss = tf.neg(tf.mean(
+            tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)
+        ))
+        return policyLoss
+    }
+
+    return tf.tidy(() => {
+        const {values, grads} = this.optPolicy.computeGradients(optFunc)
+        this.optPolicy.applyGradients(grads)
+        const kl = tf.mean(tf.sub(
+            logprobabilityBufferT,
+            this.logProb(this.actor.predict(observationBufferT), actionBufferT)
+        ))
+        return kl.arraySync()
+    })
+}),
+
+// 
+(PPO.prototype.trainValue = function (observationBufferT, returnBufferT) {
+    const optFunc = () => {
+        const valuesPredT = this.critic.predict(observationBufferT)
+        return tf.losses.meanSquaredError(returnBufferT, valuesPredT)
+    }
+            
+    tf.tidy(() => {
+        const {values, grads} = this.optValue.computeGradients(optFunc)
+        this.optValue.applyGradients(grads)
+    })
+}),
+
+
+// 
+(PPO.prototype.train = async function () {
+    // 
+     for (let i = 0; i < this.config.nEpochs; i++) {
+        const kl = this.trainPolicy(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT)
+        if (kl > 1.5 * this.config.targetKL) {
+            break
+        }
+    }
+
+    for (let i = 0;  i < this.config.nEpochs; i++) {
+        this.trainValue(observationBufferT, returnBufferT)
+    }
+}),
+
+// 
+// (PPO.prototype.learn = async function () {
+//     const state_data_tensor = tf.tensor(this.states);
+//     const action_data_tensor = tf.tensor(this.actions);
+//     const reward_data_tensor = tf.tensor(this.rewards);
+
+//     await this.policynet.fit(
+//     state_data_tensor,
+//     action_data_tensor,
+//     reward_data_tensor,
+//     {
+//         epochs: this.num_epochs,
+//         batchSize: this.batch_size,
+//         shuffle: true,
+//         verbose: 1
+//     }
+//     );
+
+//     state_data_tensor.dispose();
+//     action_data_tensor.dispose();
+//     reward_data_tensor.dispose();
+
+// }),
+
+//
+(PPO.prototype.checkpoint = async function () {
+    // save actor
+    var path = `actor-${String(new Date())}`;
+    await this.actor.save(`downloads://${path}`);
+    console.log(`### Actor saved at: ${path} ###`);
+    // save critic
+    var path = `critic-${String(new Date())}`;
+    await this.critic.save(`downloads://${path}`);
+    console.log(`### Critic saved at: ${path} ###`);
+}),
+
+// 
+(PPO.prototype.plotWeights = async function () {
+    // combine weights to plot
+    var weights = tf.concat(
+        [
+        this.actor.layers[0].getWeights()[0],
+        this.actor.layers[1].getWeights()[0],
+        this.actor.layers[2].getWeights()[0],
+        ]
+    ).transpose()
+    const tensorAsArray = await weights.array();
+
+    const trace = {
+        z: tensorAsArray,
+        type: 'heatmap',
+        zmin: -0.3,
+        zmax: 0.3,
+        colorscale: 'Viridis',
+        showscale: false
+    };
+
+    const plotDiv = document.getElementById('weightsPlot');
+
+    const layout = {
+        title: 'TensorFlow.js Tensor Heatmap',
+        xaxis: {
+            visible: false,
+            showgrid: false,
+            zeroline: false,
+            showticklabels: false,
+        },
+        yaxis: {
+            visible: false,
+            showgrid: false,
+            zeroline: false,
+            showticklabels: false,
+        },
+        margin: {
+            b: 20,
+            l: 0,
+            r: 30,
+            t: 0,
+        }
+    };
+
+    Plotly.newPlot(plotDiv, [trace], layout);
+});
+
+
 var Bird = pc.createScript("bird");
   Bird.attributes.add("flapVelocity", { type: "number", default: 1 }),
   Bird.attributes.add("gravity", { type: "number", default: 5 }),
@@ -939,7 +1193,7 @@ var Bird = pc.createScript("bird");
   Bird.attributes.add("radius", { type: "number", default: 0.068 }),
   (Bird.prototype.initialize = function () {
   var t = this.app;
-  // bird attributes
+  // BIRD ATTRIBUTES
   (this.velocity = 0),
   (this.state = "getready"),
   (this.paused = !1),
@@ -948,60 +1202,50 @@ var Bird = pc.createScript("bird");
   (this.initialPos = this.entity.getPosition().clone()),
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
-  // training hyperparameters
-  (this.num_epochs=2),
-  (this.batch_size=512),
-  (this.lambda=0.01),
-  // network architecture
-  (this.input_dim = 3),
-  (this.hidden_dim = 8),
-  this.policynet = tf.sequential({
-    layers: [
-        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: 2}),
-    ]
-  }),
-  this.policynet.compile({
-    optimizer: 'adam',
-    loss: (labels, logits, reward_weights) => tf.losses.softmaxCrossEntropy(labels, logits, reward_weights)
-  }),
-  (this.policynet.summary()),
-  // cpu time since init, updated on bird.update, for deciding when to collect state data
-  (this.timer = 0),
+  
+  this.ppo = new PPO();
+
+  // DATA COLLECTION HYPERPARAMS
   // number of milli(seconds) each (state, action) pair is collected
   (this.actionFramerate = 200),
   (this.actionSeconds = this.actionFramerate / 1000),
+  
+  // REWARD HYPERPARAMETERS
   // reward for surviving each frame
   (this.frameReward = 0.001),
   // reward for successfully passing though the pipe, aka getting a point
   (this.pipeReward = 1),
-  //
-  (this.tooHighReward = -0.02),
+  // reward if the bird goes too high
+  (this.tooHighReward = -0.05),
   // reward for dying
-  (this.deathReward = -10),
-  // value subtracted from each reward, regardless of state
-  (this.baseline = 0),
+  (this.deathReward = 0),
+  
+  // BUFFER CONFIG
+  // number of games per iteration
+  (this.numGamesPerIteration = 100),
   // number of new trajectories before training
   (this.num_new_datapoints = 0),
-  // gradient updates every trainEvery games
-  (this.trainAndSaveEvery = 250),
   // number of trajectory datapoints to train on
   (this.replayBuffer = 2500),
-  // reward tracker
-  (this.reward = 0),
-  // reward discout
-  (this.discount = 0.999),
+  // gradient updates every trainEvery games
+  (this.trainAndSaveEvery = 250),
+  // conduct network inference instead of sampling every inferenceEvery games
+  (this.inferenceEvery = 20),
+  
+  // VALUE TRACKERS
+  // cpu time since init, updated on bird.update, for deciding when to collect state data
+  (this.timer = 0),
+  // the iteration number
+  (this.iterations = 0),
   // number of games
   (this.games = 0),
   // score tracking for the bird
   (this.birdScore = 0),
-  // best score in game session
+  // best score in game session tracker
   (this.bestScore = 0),
-  // conduct network inference instead of sampling 
-  (this.inferenceEvery = 20),
+  // reward tracker
+  (this.reward = 0),
+  
   // individual trajectory rewards tracker
   (this.trajectory_rewards = []),
   // states tracker, added to dataset
@@ -1014,24 +1258,28 @@ var Bird = pc.createScript("bird");
   (this.actionsBuffer = []),
   // rewards tracker, added to dataset
   (this.rewards = []),
+
+  // PERFORMANCE TRACKING
   // sliding k-window of average rewards
   (this.k = 20),
   (this.average_of_last_k_rewards = 0);
+  
+  // INITIALIZATION ACTIONS
   // initial plotting
-  this.plotWeights();
-  const scoredimElement = document.getElementById('bestscore');
-  scoredimElement.textContent = `${this.bestScore}`;
-  const dimElement = document.getElementById('gameid');
-  dimElement.textContent = `${this.games}`;
+  this.ppo.plotWeights();
+  this.updateIterations();
+  this.updateNumGames();
+  this.updateBestScore();
+  
+
   t.on(
     "game:addscore",
     function () {
       this.reward += this.pipeReward;
       (this.birdScore += 1);
       if (this.birdScore > this.bestScore){
-        this.bestScore = this.birdScore
-        const scoredimElement = document.getElementById('bestscore');
-        scoredimElement.textContent = `${this.bestScore}`;
+        this.bestScore = this.birdScore;
+        this.updateBestScore();
       }
     },
     this
@@ -1072,86 +1320,7 @@ var Bird = pc.createScript("bird");
   }),
   this.reset();
   }),
-  (Bird.prototype.reset = function () {
-    this.app;
-    (this.birdScore = 0),
-    (this.velocity = 0),
-      (this.state = "getready"),
-      this.entity.setPosition(this.initialPos),
-      this.entity.setRotation(this.initialRot),
-      (this.entity.sprite.speed = 1);
-  }),
-  (Bird.prototype.flap = function () {
-    var t = this.app;
-    this.paused ||
-      ("getready" === this.state &&
-        (t.fire("game:play"),
-        (this.state = "play"),
-        (this.entity.sprite.speed = 2)),
-      "play" === this.state &&
-        (t.fire("game:audio", "Flap"), (this.velocity = this.flapVelocity)));
-  }),
-  (Bird.prototype.plotWeights = async function () {
-        // combine weights to plot
-        var weights = tf.concat(
-          [
-            this.policynet.layers[0].getWeights()[0],
-            this.policynet.layers[1].getWeights()[0],
-            this.policynet.layers[2].getWeights()[0],
-          ]
-        ).transpose()
-        const [rows, cols] = weights.shape;
-        const tensorAsArray = await weights.array();
 
-        const trace = {
-            z: tensorAsArray,
-            type: 'heatmap',
-            zmin: -0.3,
-            zmax: 0.3,
-            colorscale: 'Viridis',
-            showscale: false
-        };
-
-        const plotDiv = document.getElementById('myPlot');
-
-        const layout = {
-            title: 'TensorFlow.js Tensor Heatmap',
-            xaxis: {
-              visible: false,
-              showgrid: false,
-              zeroline: false,
-              showticklabels: false,
-            },
-            yaxis: {
-              visible: false,
-              showgrid: false,
-              zeroline: false,
-              showticklabels: false,
-            },
-            margin: {
-              b: 20,
-              l: 0,
-              r: 30,
-              t: 0,
-            }
-        };
-
-        Plotly.newPlot(plotDiv, [trace], layout);
-  }),
-  (Bird.prototype.rewards_to_go = function (rews) {
-    var n = rews.length;
-    rtgs = [];
-    for (let i=0; i<n; ++i){rtgs.push(0.0);}
-    for (let i=n-1; i>=0; --i) {
-      if (i === n-1) {
-        rtgs[i] = rews[i] * (this.discount)**i;
-      }
-      else{
-        rtgs[i] = (rews[i] + rtgs[i+1])* (this.discount)**i;
-      }
-    }
-    return rtgs
-  }),
   (Bird.prototype.getStateInfo = function (bird_y) {
     var i = this.app;
 
@@ -1165,9 +1334,13 @@ var Bird = pc.createScript("bird");
     else if (this.birdScore === 1) {next_pipe_height = pipe2.y;}
     else {next_pipe_height = pipe2.y;}
 
+    if (bird_y === undefined){
+      bird_y = 1
+    }
+
     state_array = [bird_y, next_pipe_height, pipes.x];
 
-    verbose = true
+    verbose = false
     if (verbose == true) {
       console.log(`
         Game      : ${this.games}
@@ -1184,163 +1357,56 @@ var Bird = pc.createScript("bird");
 
     return state_array
   }),
+
   (Bird.prototype.doAction = function () {
     coords = this.entity.getPosition();
     bird_y = coords.y;
-
-    // 
-    this.reward = this.frameReward;
     // if bird is too high, add negative reward
-    if (bird_y > 1.0) {
-      this.reward += this.tooHighReward
-    }
-    
+    if (bird_y > 1.0) {this.reward += this.tooHighReward;}
     state_array = this.getStateInfo(bird_y);
 
     state = tf.tensor([state_array]);
 
-    
-    // use policy action to choose action
-    logits = this.policynet.predict(state);
+    // 
+    [predsT, actionT] = this.ppo.sampleAction(state);
+    // 
+    sampledAction = actionT.arraySync()[0];
 
-    // argmax every inferenceEvery game, sample otherwise
-    if ((this.games % this.inferenceEvery) === (this.inferenceEvery - 1)) {
-      var actionChoice = tf.argMax(logits, axis=1).dataSync()[0];
-      tempSoft = tf.softmax(logits);
-      // console.log(`softmax(logits) = ${tempSoft.arraySync()} actionChoice = ${actionChoice}`);
-      tempSoft.dispose();
-    }
-    else {
-      temp = tf.multinomial(logits=logits, num_samples=1);
-      action = tf.squeeze(temp, axis=1);
-      var actionChoice = action.dataSync()[0];
-    }
-    // clean up temps
-    temp.dispose();
-    logits.dispose();
-    state.dispose();
-    action.dispose();
+    // add 
+    this.ppo.buffer.add(
+      state_array,
+      action, 
+      reward, 
+      value, 
+      logits
+    );
 
-    // append reward to individual trajectory array
-    this.trajectory_rewards.push(this.reward - this.baseline);
-    // append time step data to trajectory data
-    this.statesBuffer.push(state_array);
-    onehot_action = [0,0];
-    onehot_action[actionChoice] = 1;
-    this.actionsBuffer.push(onehot_action);
+    // NOTE make sure we are getting the right reward
 
-    // var action = 0;
-    const myImageElement = document.getElementById("myImage");
     // take action
-    if (actionChoice === 1){
-      // this.flap();
-      // myImageElement.src = "assets/down.jpg";
-      setTimeout(
-        function () {
-            // i.fire('game:press', 50, 50);
-            myImageElement.src = "assets/down.jpg";
-          },
-        this.actionFramerate
-      );
-    }
-    else {
-      // myImageElement.src = "assets/up.jpg";
-      setTimeout(
-        function () {
-            myImageElement.src = "assets/up.jpg";
-          },
-        this.actionFramerate
-      );
-    }
+    if (sampledAction === 1){this.flap();}
+    
+    this.updateCatGraphic();
     
   }),
-
-  (Bird.prototype.checkpoint = async function () {
-    var path = `model-after-${this.games}-${String(new Date())}`;
-    await this.policynet.save(`downloads://${path}`);
-    // const saveResultdisk = await this.policynet.save(`file://${path}`);
-    console.log(`### Model saved at: ${path} ###`);
-  }),
+  
   (Bird.prototype.die = function (t) {
     var i = this.app;
-
-    // 
-    (this.games += 1);
-    if (this.score > this.bestScore){
-      this.bestScore = this.score;
-    }
-    const dimElement = document.getElementById('gameid');
-    dimElement.textContent = `${this.games}`;
-
-    // add death state, action, reward to trajectory
-    state_array = this.getStateInfo();
-    this.statesBuffer.push(state_array);
-
-    onehot_action = [0,0];
-    onehot_action[0] = 1;
-    this.actionsBuffer.push(onehot_action);
-
-    reward = this.deathReward
-    this.trajectory_rewards.push(reward);
-
-
-    // reward-to-go processing
-    reward_weights = this.rewards_to_go(this.trajectory_rewards);
-
-    console.log(`reward_weights: ${reward_weights} trajectory: ${this.trajectory_rewards}`)
+    // update games and scores
+    this.games += 1;
+    this.updateNumGames();
+    if (this.score > this.bestScore){this.bestScore = this.score;}
     
-    // adds experience to replay buffer based on scale of return
-    if (reward_weights[0] === undefined){
-      console.log(`Undefined reward! traj: ${this.trajectory} reward_weights: ${reward_weights}`);
+    // process trajectory
+    this.ppo.buffer.finishTrajectory();
+
+    // if the end of an iteration, train and reset
+    if ((this.games % this.numGamesPerIteration) === 0){
+      this.ppo.train();
+      this.games = 0;
+      this.iterations += 1;
     }
-    else{
-      // add trajectory to replay buffer proportionally to the size of the reward
-      // if (Math.random() < Math.abs(reward_weights[0])) {
-      if (true) {
-        this.states = this.states.concat(this.statesBuffer);
-        this.actions = this.actions.concat(this.actionsBuffer);
-        for (let i=0; i<reward_weights.length; i++){
-          // the following -1 is to gradient ascend instead of descend in tf's .fit method
-          this.rewards.push([-1 * reward_weights[i]]);
-        }
-        this.num_new_datapoints += reward_weights.length;
-        if ((this.games % this.inferenceEvery) === 0) {
-          console.log(`*Game: ${this.games} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
-        }
-        else {
-          console.log(`Game: ${this.games} | Buffer: ${this.rewards.length} | Return: ${reward_weights[0]}`);
-        }
-      }
-    }
-
-    // flush buffers
-    this.statesBuffer = [];
-    this.actionsBuffer = [];
-
-    // roll buffer if over buffersize
-    if (this.rewards.length > this.replayBuffer) {
-        var excess_experience = this.rewards.length - this.replayBuffer;
-        this.rewards = this.rewards.slice(excess_experience);
-        this.states = this.states.slice(excess_experience);
-        this.actions = this.actions.slice(excess_experience);
-    }
-
-    // save and train every time this.num_new_datapoints
-    if (this.num_new_datapoints >= this.trainAndSaveEvery){
-      this.checkpoint();
-
-      this.learn();
-      
-      console.log(`### Trained for ${this.num_epochs} epochs ###`);
-  
-      this.plotWeights();
-
-      this.num_new_datapoints = 0;
-
-    }
-
-    this.trajectory_rewards = [];
-    (this.reward = 0),
+    
     (this.state = "dead"),
     (this.entity.sprite.speed = 0),
     i.fire("game:audio", "Hit"),
@@ -1351,46 +1417,21 @@ var Bird = pc.createScript("bird");
         i.fire("game:audio", "Die");
       }, 500);
   }),
-  (Bird.prototype.learn = async function () {
-    const state_data_tensor = tf.tensor(this.states);
-    const action_data_tensor = tf.tensor(this.actions);
-    const reward_data_tensor = tf.tensor(this.rewards);
-    
-    await this.policynet.fit(
-        state_data_tensor,
-        action_data_tensor,
-        reward_data_tensor,
-        {
-          epochs: this.num_epochs,
-          batchSize: this.batch_size,
-          shuffle: true,
-          verbose: 1
-        }
-      );
 
-      state_data_tensor.dispose();
-      action_data_tensor.dispose();
-      reward_data_tensor.dispose();
+  //
+  (Bird.prototype.doEveryFrame = function () {
+    // every actionSeconds seconds, do action
+    if (this.timer >= this.actionSeconds) {
+      // 
+      this.doAction();
+      // 
+      this.reward = this.frameReward;
+      // Reset the timer, but subtract the leftover time for accuracy
+      this.timer -= this.actionSeconds;
+    }
+  }),
 
-  }),
-  (Bird.prototype.circleRectangleIntersect = function (t, i) {
-    var e = t.x,
-      s = t.y,
-      a = t.r,
-      r = i.x,
-      h = i.y,
-      n = i.w,
-      o = i.h,
-      p = Math.abs(e - r - n / 2),
-      d = Math.abs(s - h - o / 2);
-    if (p > n / 2 + a) return !1;
-    if (d > o / 2 + a) return !1;
-    if (p <= n / 2) return !0;
-    if (d <= o / 2) return !0;
-    var y = p - n / 2,
-      l = d - o / 2;
-    return y * y + l * l <= a * a;
-  }),
+  //
   (Bird.prototype.update = function (t) {
     var i = this.app;
 
@@ -1426,16 +1467,89 @@ var Bird = pc.createScript("bird");
             this.circleRectangleIntersect(o, n) && this.die(!0);
         }
       }
-      // every quarter second, do action
-      if (this.timer >= this.actionSeconds) {
-        // 
-        this.doAction();
-        // Reset the timer, but subtract the leftover time for accuracy
-        this.timer -= this.actionSeconds;
 
-      }
-    
+      // 
+      this.doEveryFrame();
     }
+  }),
+
+  //
+  (Bird.prototype.updateNumIterations = function () {
+    const dimElement = document.getElementById('iterid');
+    dimElement.textContent = `${this.iteration}`;
+  }),
+
+  //
+  (Bird.prototype.updateNumGames = function () {
+    const dimElement = document.getElementById('gameid');
+    dimElement.textContent = `${this.games}`;
+  }),
+  
+  //
+  (Bird.prototype.updateBestScore = function () {
+    const scoredimElement = document.getElementById('bestscore');
+    scoredimElement.textContent = `${this.bestScore}`;
+  }),
+
+  // update the cat graphic for a given action
+  (Bird.prototype.updateCatGraphic = function (action) {
+    const catElement = document.getElementById("cat");
+    if (action === 1) {
+      setTimeout(
+        function () {
+            catElement.src = "assets/down.jpg";
+          },
+        this.actionFramerate
+      );
+    }
+    else {
+      setTimeout(
+        function () {
+            catElement.src = "assets/up.jpg";
+          },
+        this.actionFramerate
+      );
+    }
+  }),
+
+  (Bird.prototype.reset = function () {
+    this.app;
+    (this.birdScore = 0),
+    (this.velocity = 0),
+      (this.state = "getready"),
+      this.entity.setPosition(this.initialPos),
+      this.entity.setRotation(this.initialRot),
+      (this.entity.sprite.speed = 1);
+  }),
+
+  (Bird.prototype.flap = function () {
+    var t = this.app;
+    this.paused ||
+      ("getready" === this.state &&
+        (t.fire("game:play"),
+        (this.state = "play"),
+        (this.entity.sprite.speed = 2)),
+      "play" === this.state &&
+        (t.fire("game:audio", "Flap"), (this.velocity = this.flapVelocity)));
+  }),
+
+  (Bird.prototype.circleRectangleIntersect = function (t, i) {
+    var e = t.x,
+      s = t.y,
+      a = t.r,
+      r = i.x,
+      h = i.y,
+      n = i.w,
+      o = i.h,
+      p = Math.abs(e - r - n / 2),
+      d = Math.abs(s - h - o / 2);
+    if (p > n / 2 + a) return !1;
+    if (d > o / 2 + a) return !1;
+    if (p <= n / 2) return !0;
+    if (d <= o / 2) return !0;
+    var y = p - n / 2,
+      l = d - o / 2;
+    return y * y + l * l <= a * a;
   });
 
 // 
@@ -1582,9 +1696,6 @@ Scroll.attributes.add("startEvent", { type: "string", default: "start" }),
       this.entity.getLocalPosition().x < this.endX &&
         (this.entity.translateLocal(this.startX - this.endX, 0, 0),
         e.fire(this.cycleEvent)));
-  });
-  (Scroll.prototype.getXPosition = function() {
-      return this.entity.getLocalPosition().x;
   });
 
 // 
