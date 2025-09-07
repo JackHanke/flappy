@@ -911,281 +911,357 @@ Button.attributes.add("diplacement", { type: "number", default: 0.00390625 }),
 
 var Sparkle = pc.createScript("sparkle");
 Sparkle.attributes.add("radius", { type: "number", default: 1 }),
-  (Sparkle.prototype.initialize = function () {
-    (this.initialPos = this.entity.getLocalPosition().clone()),
-      this.entity.sprite.on(
-        "loop",
-        function () {
-          var t = Math.random() * Math.PI * 2,
-            i = Math.random() * this.radius,
-            a = Math.cos(t) * i,
-            s = Math.sin(t) * i;
-          this.entity.setLocalPosition(
-            this.initialPos.x + a,
-            this.initialPos.y + s,
-            this.initialPos.z
-          );
-        },
-        this
-      );
-  });
-
-// 
-
-// 
-function Buffer() {
-    // discount
-    this.discount = 1;
-    this.reset();
-}
-
-
-// 
-(Buffer.prototype.add = function () {
-    this.observationBuffer.push(observation.slice(0))
-    this.actionBuffer.push(action)
-    this.rewardBuffer.push(reward)
-    this.valueBuffer.push(value)
-    this.logprobabilityBuffer.push(logprobability)
-}),
-
-//
-(Buffer.prototype.reset = function () {
-    this.observationBuffer = []
-    this.actionBuffer = []
-    this.advantageBuffer = []
-    this.rewardBuffer = []
-    this.returnBuffer = []
-    this.valueBuffer = []
-    this.logprobabilityBuffer = []
-}),
-
-//
-(Buffer.prototype.finishTrajectory = function () {
-}),
-
-//
-(Buffer.prototype.get = function () {
-}),
-
-//
-(Buffer.prototype.rewards_to_go = function (rews) {
-    var n = rews.length;
-    rtgs = [];
-    for (let i=0; i<n; ++i){rtgs.push(0.0);}
-    for (let i=n-1; i>=0; --i) {
-        if (i === n-1) {
-        rtgs[i] = rews[i] * (this.discount)**i;
-        }
-        else{
-        rtgs[i] = (rews[i] + rtgs[i+1])* (this.discount)**i;
-        }
-    }
-    return rtgs
+(Sparkle.prototype.initialize = function () {
+  (this.initialPos = this.entity.getLocalPosition().clone()),
+    this.entity.sprite.on(
+      "loop",
+      function () {
+        var t = Math.random() * Math.PI * 2,
+          i = Math.random() * this.radius,
+          a = Math.cos(t) * i,
+          s = Math.sin(t) * i;
+        this.entity.setLocalPosition(
+          this.initialPos.x + a,
+          this.initialPos.y + s,
+          this.initialPos.z
+        );
+      },
+      this
+    );
 });
 
-
-
-/*
-Terminology:
-the actor is the policy
-the critic is the value estimator
-a trajectory is a 
-an iteration is 
-*/
-
-// PPO class modified from https://github.com/zemlyansky/ppo-tfjs
-function PPO() {
-
-    this.buffer = new Buffer();
-
-    // configure networks
-    this.input_dim = 3;
-    this.hidden_dim = 8;
-    this.actor = tf.sequential({
-    layers: [
-        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: 2}),
-        ]
-    });
-    this.critic = tf.sequential({
-    layers: [
-        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: 1}),
-    ]
-    });
-
-    // configure optimizers
-    this.optPolicy = tf.train.adam(1e-3);
-    this.optValue = tf.train.adam(1e-3);
-
-    // training hyperparameters
-    this.num_epochs=10;
-    this.batch_size=512;
-    this.lambda=0.01;
-
+function containsNaN(tensor) {
+  return tf.any(tf.isNaN(tensor));
 }
 
-// 
-(PPO.prototype.sampleAction = function (observationT) {
-    return tf.tidy(() => {
-        logits = this.actor.predict(observationT);
-        action = tf.squeeze(tf.multinomial(logits=logits, num_samples=1), axis=1);
-        return [logits, action]
-    })
+// code modified from https://github.com/zemlyansky/ppo-tfjs/tree/main 
+
+function Buffer() {
+  this.gamma = 0.99;
+  this.lam = 0.95;
+  this.reset()
+}
+
+(Buffer.prototype.reset = function () {
+  this.observationBuffer = []
+  this.actionBuffer = []
+  this.advantageBuffer = []
+  this.rewardBuffer = []
+  this.returnBuffer = []
+  this.valueBuffer = []
+  this.logprobabilityBuffer = []
+  this.trajectoryStartIndex = 0
+  this.pointer = 0
 }),
 
-// 
-(PPO.prototype.trainPolicy = function (observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT) {
-    const optFunc = () => {
-        const predsT = this.actor.predict(observationBufferT) // -> Logits or means
-        const diffT = tf.sub(
-            this.logProb(predsT, actionBufferT),
-            logprobabilityBufferT
-        )
-        const ratioT = tf.exp(diffT)
-        const minAdvantageT = tf.where(
-            tf.greater(advantageBufferT, 0),
-            tf.mul(tf.add(1, this.config.clipRatio), advantageBufferT),
-            tf.mul(tf.sub(1, this.config.clipRatio), advantageBufferT)
-        )
-        const policyLoss = tf.neg(tf.mean(
-            tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)
-        ))
-        return policyLoss
-    }
-
-    return tf.tidy(() => {
-        const {values, grads} = this.optPolicy.computeGradients(optFunc)
-        this.optPolicy.applyGradients(grads)
-        const kl = tf.mean(tf.sub(
-            logprobabilityBufferT,
-            this.logProb(this.actor.predict(observationBufferT), actionBufferT)
-        ))
-        return kl.arraySync()
-    })
+(Buffer.prototype.add = function (observation, action, reward, value, logprobability) {
+  this.observationBuffer.push(observation)
+  this.actionBuffer.push(action)
+  this.rewardBuffer.push(reward)
+  this.valueBuffer.push(value)
+  this.logprobabilityBuffer.push(logprobability)
+  this.pointer += 1
 }),
 
+(Buffer.prototype.discountedCumulativeSums = function  (arr, coeff) {
+  let res = []
+  let s = 0
+  arr.reverse().forEach(v => {
+      s = v + s * coeff
+      res.push(s)
+  })
+  return res.reverse()
+}),
+
+(Buffer.prototype.finishTrajectory = function () {
+  lastValue = 0;
+  const rewards = this.rewardBuffer
+      .slice(this.trajectoryStartIndex, this.pointer)
+      .concat(lastValue * this.gamma);
+  const values = this.valueBuffer
+      .slice(this.trajectoryStartIndex, this.pointer)
+      .concat(lastValue);
+  const deltas = rewards
+      .slice(0, -1)
+      .map((reward, ri) => reward - (values[ri] - this.gamma * values[ri + 1]));
+  
+  this.advantageBuffer = this.advantageBuffer
+  .concat(this.discountedCumulativeSums(deltas, this.gamma * this.lam));
+  this.returnBuffer = this.returnBuffer
+  .concat(this.discountedCumulativeSums(rewards, this.gamma).slice(0, -1));
+  this.trajectoryStartIndex = this.pointer;
+
+}),
+
+(Buffer.prototype.get = function () {
+  const [advantageMean, advantageStd] = tf.tidy(() => [
+      tf.mean(this.advantageBuffer).arraySync(),
+      tf.moments(this.advantageBuffer).variance.sqrt().arraySync()
+  ])
+  
+  this.advantageBuffer = this.advantageBuffer
+      .map(advantage => (advantage - advantageMean) / advantageStd)
+  
+  return [
+    this.observationBuffer,
+    this.actionBuffer,
+    this.advantageBuffer,
+    this.returnBuffer,
+    this.logprobabilityBuffer
+  ]
+});
+
 // 
+
+function PPO () {
+  // config  
+  this.nEpochs = 10;
+  this.policyLearningRate = 1e-3;
+  this.valueLearningRate = 1e-3;
+  this.clipRatio = 0.2;
+  this.targetKL = 0.01;
+
+  // Initialize buffer
+  this.buffer = new Buffer()
+
+  // Initialize models for actor and critic
+  this.input_dim = 3;
+  this.hidden_dim = 8;
+  // this.actor = tf.sequential({
+  // layers: [
+  //     tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: 2}),
+  //     ]
+  // });
+  // this.critic = tf.sequential({
+  // layers: [
+  //     tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+  //     tf.layers.dense({units: 1}),
+  // ]
+  // });
+  this.load();
+  
+  // Initialize optimizers
+  this.optPolicy = tf.train.adam(this.policyLearningRate)
+  this.optValue = tf.train.adam(this.valueLearningRate)
+}
+
+(PPO.prototype.load = async function () {
+  // this.actor = tf.loadLayersModel('software/flappy/game/checkpoints/actor-34.json');
+  this.actor = await tf.loadLayersModel('./checkpoints/actor-34.json');
+  // this.critic = tf.loadLayersModel('software/flappy/game/checkpoints/critic-34.json');
+  this.critic = await tf.loadLayersModel('./checkpoints/critic-34.json');
+
+}),
+
+(PPO.prototype.argmaxAction = function (observationT) {
+  return tf.tidy(() => {
+      const preds = tf.squeeze(this.actor.predict(observationT), 0)
+      console.log(`${preds} ${preds.shape}`)
+      let action = tf.argMax(preds)      
+      return [preds, action]
+  })
+}),
+
+(PPO.prototype.sampleAction = function(observationT) {
+  return tf.tidy(() => {
+      const preds = tf.squeeze(this.actor.predict(observationT), 0)
+      let action = tf.squeeze(tf.multinomial(preds, 1), 0) // > []      
+      return [preds, action]
+  })
+}),
+
+(PPO.prototype.logProbCategorical = function(logits, x) {
+  return tf.tidy(() => {
+    const numActions = logits.shape[logits.shape.length - 1]
+    const logprobabilitiesAll = tf.logSoftmax(logits)
+    return tf.sum(
+        tf.mul(tf.oneHot(x, numActions), logprobabilitiesAll),
+        logprobabilitiesAll.shape.length - 1
+    )
+  })
+}),
+  
+
+(PPO.prototype.logProb = function(preds, actions) {
+  return this.logProbCategorical(preds, actions)
+}),
+
+  
+(PPO.prototype.predict = function(observation) {
+  return this.actor.predict(observation)
+}),
+
+
+(PPO.prototype.trainPolicy = function(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT) {
+  const optFunc = () => {
+    const predsT = this.actor.predict(observationBufferT) // -> Logits or means
+    const diffT = tf.sub(
+        this.logProb(predsT, actionBufferT),
+        logprobabilityBufferT
+    )
+
+    const ratioT = tf.exp(diffT)
+    // console.log(`logprob : ${this.logProb(predsT, actionBufferT)} predsT: ${predsT} diffT: ${diffT} ratioT: ${ratioT}`)
+    // console.log(`logprob : ${this.logProb(predsT, actionBufferT)}`)
+    const minAdvantageT = tf.where(
+        tf.greater(advantageBufferT, 0),
+        tf.mul(tf.add(1, this.clipRatio), advantageBufferT),
+        tf.mul(tf.sub(1, this.clipRatio), advantageBufferT)
+    )
+    const policyLoss = tf.neg(tf.mean(
+        tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)
+    ))
+    // console.log(`policy loss: ${policyLoss} min  ${tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)}`)
+    return policyLoss
+  }
+
+  return tf.tidy(() => {
+      const {values, grads} = this.optPolicy.computeGradients(optFunc)
+      this.optPolicy.applyGradients(grads)
+      const kl = tf.mean(tf.sub(
+          logprobabilityBufferT,
+          this.logProb(this.actor.predict(observationBufferT), actionBufferT)
+      ))
+      return kl.arraySync()
+  })
+}),
+
 (PPO.prototype.trainValue = function (observationBufferT, returnBufferT) {
-    const optFunc = () => {
-        const valuesPredT = this.critic.predict(observationBufferT)
-        return tf.losses.meanSquaredError(returnBufferT, valuesPredT)
-    }
-            
-    tf.tidy(() => {
-        const {values, grads} = this.optValue.computeGradients(optFunc)
-        this.optValue.applyGradients(grads)
-    })
+  const optFunc = () => {
+      const valuesPredT = this.critic.predict(observationBufferT)
+      return tf.losses.meanSquaredError(returnBufferT, valuesPredT)
+  }
+          
+  tf.tidy(() => {
+      const {values, grads} = this.optValue.computeGradients(optFunc)
+      this.optValue.applyGradients(grads)
+  })
 }),
 
+(PPO.prototype.train = async function (iteration) {
+  // Get values from the buffer
+  const [
+      observationBuffer,
+      actionBuffer,
+      advantageBuffer,
+      returnBuffer,
+      logprobabilityBuffer,
+  ] = this.buffer.get()
 
-// 
-(PPO.prototype.train = async function () {
-    // 
-     for (let i = 0; i < this.config.nEpochs; i++) {
-        const kl = this.trainPolicy(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT)
-        if (kl > 1.5 * this.config.targetKL) {
-            break
-        }
-    }
+  const [
+    observationBufferT,
+    actionBufferT,
+    advantageBufferT,
+    returnBufferT,
+    logprobabilityBufferT
+  ] = tf.tidy(() => [
+    tf.tensor(observationBuffer),
+    tf.tensor(actionBuffer, null, 'int32'),
+    tf.tensor(advantageBuffer),
+    tf.tensor(returnBuffer).reshape([-1, 1]),
+    tf.tensor(logprobabilityBuffer)
+  ])
 
-    for (let i = 0;  i < this.config.nEpochs; i++) {
-        this.trainValue(observationBufferT, returnBufferT)
+  // console.log(`obs : ${containsNaN(observationBufferT)}`)
+  // console.log(`act : ${containsNaN(actionBufferT)}`)
+  // console.log(`adv : ${containsNaN(advantageBufferT)}`)
+  // console.log(`ret : ${containsNaN(returnBufferT)}`)
+  // console.log(`log : ${containsNaN(logprobabilityBufferT)}`)
+  
+
+  for (let i = 0; i < this.nEpochs; i++) {
+    console.log(`Epoch ${i} starting...`)
+    const kl = this.trainPolicy(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT)
+    if (kl > 1.5 * this.targetKL) {
+      console.log(`[PPO] Training ended early at Epoch ${i}/${this.nEpochs}`)
+      break
     }
+  }
+
+  for (let i = 0;  i < this.nEpochs; i++) {
+    this.trainValue(observationBufferT, returnBufferT)
+  }
+
+  tf.dispose([
+      observationBufferT, 
+      actionBufferT,
+      advantageBufferT,
+      returnBufferT,
+      logprobabilityBufferT
+  ]);
+
+  this.checkpoint(iteration);
 }),
 
-// 
-// (PPO.prototype.learn = async function () {
-//     const state_data_tensor = tf.tensor(this.states);
-//     const action_data_tensor = tf.tensor(this.actions);
-//     const reward_data_tensor = tf.tensor(this.rewards);
-
-//     await this.policynet.fit(
-//     state_data_tensor,
-//     action_data_tensor,
-//     reward_data_tensor,
-//     {
-//         epochs: this.num_epochs,
-//         batchSize: this.batch_size,
-//         shuffle: true,
-//         verbose: 1
-//     }
-//     );
-
-//     state_data_tensor.dispose();
-//     action_data_tensor.dispose();
-//     reward_data_tensor.dispose();
-
-// }),
-
-//
-(PPO.prototype.checkpoint = async function () {
-    // save actor
-    var path = `actor-${String(new Date())}`;
-    await this.actor.save(`downloads://${path}`);
-    console.log(`### Actor saved at: ${path} ###`);
-    // save critic
-    var path = `critic-${String(new Date())}`;
-    await this.critic.save(`downloads://${path}`);
-    console.log(`### Critic saved at: ${path} ###`);
+(PPO.prototype.checkpoint = async function (iteration) {
+  // save actor
+  var path = `actor-${iteration}-${String(new Date())}`;
+  await this.actor.save(`downloads://${path}`);
+  console.log(`[PPO] Actor saved at: ${path} ###`);
+  // save critic
+  var path = `critic-${iteration}-${String(new Date())}`;
+  await this.critic.save(`downloads://${path}`);
+  console.log(`[PPO] Critic saved at: ${path} ###`);
 }),
 
 // 
 (PPO.prototype.plotWeights = async function () {
-    // combine weights to plot
-    var weights = tf.concat(
-        [
-        this.actor.layers[0].getWeights()[0],
-        this.actor.layers[1].getWeights()[0],
-        this.actor.layers[2].getWeights()[0],
-        ]
-    ).transpose()
-    const tensorAsArray = await weights.array();
+  // combine weights to plot
+  var weights = tf.concat(
+      [
+      this.actor.layers[0].getWeights()[0],
+      this.actor.layers[1].getWeights()[0],
+      this.actor.layers[2].getWeights()[0],
+      ]
+  ).transpose()
+  const tensorAsArray = await weights.array();
 
-    const trace = {
-        z: tensorAsArray,
-        type: 'heatmap',
-        zmin: -0.3,
-        zmax: 0.3,
-        colorscale: 'Viridis',
-        showscale: false
-    };
+  const trace = {
+      z: tensorAsArray,
+      type: 'heatmap',
+      zmin: -0.3,
+      zmax: 0.3,
+      colorscale: 'Viridis',
+      showscale: false
+  };
 
-    const plotDiv = document.getElementById('weightsPlot');
+  const plotDiv = document.getElementById('weightsPlot');
 
-    const layout = {
-        title: 'TensorFlow.js Tensor Heatmap',
-        xaxis: {
-            visible: false,
-            showgrid: false,
-            zeroline: false,
-            showticklabels: false,
-        },
-        yaxis: {
-            visible: false,
-            showgrid: false,
-            zeroline: false,
-            showticklabels: false,
-        },
-        margin: {
-            b: 20,
-            l: 0,
-            r: 30,
-            t: 0,
-        }
-    };
+  const layout = {
+      title: 'TensorFlow.js Tensor Heatmap',
+      xaxis: {
+          visible: false,
+          showgrid: false,
+          zeroline: false,
+          showticklabels: false,
+      },
+      yaxis: {
+          visible: false,
+          showgrid: false,
+          zeroline: false,
+          showticklabels: false,
+      },
+      margin: {
+          b: 20,
+          l: 0,
+          r: 30,
+          t: 0,
+      }
+  };
 
-    Plotly.newPlot(plotDiv, [trace], layout);
+  Plotly.newPlot(plotDiv, [trace], layout);
 });
 
 
+
+// 
 var Bird = pc.createScript("bird");
   Bird.attributes.add("flapVelocity", { type: "number", default: 1 }),
   Bird.attributes.add("gravity", { type: "number", default: 5 }),
@@ -1209,28 +1285,20 @@ var Bird = pc.createScript("bird");
   // number of milli(seconds) each (state, action) pair is collected
   (this.actionFramerate = 200),
   (this.actionSeconds = this.actionFramerate / 1000),
+
+  // BUFFER CONFIG
+  // number of games per iteration
+  (this.numGamesPerIteration = 200),
   
   // REWARD HYPERPARAMETERS
   // reward for surviving each frame
-  (this.frameReward = 0.001),
+  (this.frameReward = 0.01),
   // reward for successfully passing though the pipe, aka getting a point
   (this.pipeReward = 1),
   // reward if the bird goes too high
-  (this.tooHighReward = -0.05),
+  (this.tooHighReward = -0.5),
   // reward for dying
-  (this.deathReward = 0),
-  
-  // BUFFER CONFIG
-  // number of games per iteration
-  (this.numGamesPerIteration = 100),
-  // number of new trajectories before training
-  (this.num_new_datapoints = 0),
-  // number of trajectory datapoints to train on
-  (this.replayBuffer = 2500),
-  // gradient updates every trainEvery games
-  (this.trainAndSaveEvery = 250),
-  // conduct network inference instead of sampling every inferenceEvery games
-  (this.inferenceEvery = 20),
+  (this.deathReward = -3),
   
   // VALUE TRACKERS
   // cpu time since init, updated on bird.update, for deciding when to collect state data
@@ -1246,31 +1314,15 @@ var Bird = pc.createScript("bird");
   // reward tracker
   (this.reward = 0),
   
-  // individual trajectory rewards tracker
-  (this.trajectory_rewards = []),
-  // states tracker, added to dataset
-  (this.states = []),
-  // the collection of states experienced in a trajectory
-  (this.statesBuffer = []),
-  // actions tracker, added to dataset
-  (this.actions = []),
-  // the collection of actions experienced in a trajectory
-  (this.actionsBuffer = []),
-  // rewards tracker, added to dataset
-  (this.rewards = []),
+  // value trackers
+  (this.rlreset()),
 
-  // PERFORMANCE TRACKING
-  // sliding k-window of average rewards
-  (this.k = 20),
-  (this.average_of_last_k_rewards = 0);
-  
   // INITIALIZATION ACTIONS
   // initial plotting
-  this.ppo.plotWeights();
-  this.updateIterations();
-  this.updateNumGames();
-  this.updateBestScore();
-  
+  (this.updateNumIterations()),
+  (this.updateNumGames()),
+  (this.updateBestScore()),
+  (this.ppo.plotWeights()),
 
   t.on(
     "game:addscore",
@@ -1340,21 +1392,6 @@ var Bird = pc.createScript("bird");
 
     state_array = [bird_y, next_pipe_height, pipes.x];
 
-    verbose = false
-    if (verbose == true) {
-      console.log(`
-        Game      : ${this.games}
-        Pipes  .x : ${pipes.x}
-        Bird   .y : ${bird_y}
-        Bird  vel : ${this.velocity}
-        NexPipe.y : ${next_pipe_height}
-        Pipe 1 .y : ${pipe1.y}
-        Pipe 2 .y : ${pipe2.y}
-        Reward    : ${this.reward}
-        `
-      );
-    }
-
     return state_array
   }),
 
@@ -1365,57 +1402,107 @@ var Bird = pc.createScript("bird");
     if (bird_y > 1.0) {this.reward += this.tooHighReward;}
     state_array = this.getStateInfo(bird_y);
 
-    state = tf.tensor([state_array]);
+    const [preds, action, value, logits] = tf.tidy(() => {
+      state = tf.tensor([state_array]);
+      // const lastObservationT = tf.tensor([this.lastObservation])
+      // const [predsT, actionT] = this.ppo.sampleAction(state)
+      const [predsT, actionT] = this.ppo.argmaxAction(state)
+      console.log(`> ${tf.softmax(predsT).arraySync()}`);
+      const valueT = this.ppo.critic.predict(state)
+      const logprobabilityT = this.ppo.logProb(predsT, actionT)
+      return [
+          predsT.arraySync(), // -> Discrete: [actionSpace.n] or Box: [actionSpace.shape[0]]
+          actionT.arraySync(), // -> Discrete: [] or Box: [actionSpace.shape[0]]
+          valueT.arraySync()[0][0],
+          logprobabilityT.arraySync()
+      ]
+    });
 
-    // 
-    [predsT, actionT] = this.ppo.sampleAction(state);
-    // 
-    sampledAction = actionT.arraySync()[0];
+    this.allPreds.push(preds)
+    this.allActions.push(action)
+
+    this.sumReturn += this.reward
+    this.sumLength += 1
 
     // add 
     this.ppo.buffer.add(
       state_array,
-      action, 
-      reward, 
-      value, 
+      action,
+      this.reward,
+      value,
       logits
     );
 
-    // NOTE make sure we are getting the right reward
+    verbose = false
+    if (verbose == true) {
+      console.log(`
+        Game      : ${this.games}
+        Pipes  .x : ${pipes.x}
+        Bird   .y : ${bird_y}
+        NexPipe.y : ${next_pipe_height}
+        Reward    : ${this.reward}
+        `
+      );
+    }
 
     // take action
-    if (sampledAction === 1){this.flap();}
+    if (action === 1){this.flap();}
     
-    this.updateCatGraphic();
+    this.updateCatGraphic(action);
     
   }),
-  
-  (Bird.prototype.die = function (t) {
-    var i = this.app;
+
+  (Bird.prototype.rlreset = function () {
+    this.sumReturn = 0
+    this.sumLength = 0
+    this.numEpisodes = 0
+
+    this.allPreds = []
+    this.allActions = []
+  }),
+
+  (Bird.prototype.rlondeath = function () {
     // update games and scores
     this.games += 1;
     this.updateNumGames();
     if (this.score > this.bestScore){this.bestScore = this.score;}
     
+    // add death reward
+    num_datapoints = this.ppo.buffer.rewardBuffer.length
+    this.ppo.buffer.rewardBuffer[num_datapoints - 1] += this.deathReward
+
     // process trajectory
     this.ppo.buffer.finishTrajectory();
 
     // if the end of an iteration, train and reset
     if ((this.games % this.numGamesPerIteration) === 0){
-      this.ppo.train();
-      this.games = 0;
+      console.log(`Training on ${num_datapoints} datapoints`)
+      // train
+      
+      // console.log(`obs Nan : ${containsNaN(this.ppo.buffer.observationBuffer)}`)
+      // console.log(`actions Nan : ${containsNaN(this.ppo.buffer.actionBuffer)}`)
+      // console.log(`reward Nan : ${containsNaN(this.ppo.buffer.rewardBuffer)}`)
+      // console.log(`returns Nan : ${containsNaN(this.ppo.buffer.returnBuffer)}`)
+      // console.log(`adv Nan : ${containsNaN(this.ppo.buffer.advantageBuffer)}`)
+      // console.log(`reward Nan : ${this.ppo.buffer.rewardBuffer}`)
+      
+      // console.log(`actor weights before training ${containsNaN(this.ppo.actor.layers[0].getWeights()[0])}`)
+      // console.log(`critic weights before training ${containsNaN(this.ppo.critic.layers[0].getWeights()[0])}`)
+      this.ppo.train(this.iterations);
+      // console.log(`actor weights after training ${containsNaN(this.ppo.actor.layers[0].getWeights()[0])}`)
+      if (containsNaN(this.ppo.actor.layers[0].getWeights()[0]) == true) {
+        console.log(`NaN Weights!`);
+      }
+      // increment iterations, reset game counter
       this.iterations += 1;
+      this.updateNumIterations();
+      this.games = 0;
+      // reset buffer and trackers
+      this.ppo.buffer.reset();
+      this.rlreset();
+
+      this.ppo.plotWeights();
     }
-    
-    (this.state = "dead"),
-    (this.entity.sprite.speed = 0),
-    i.fire("game:audio", "Hit"),
-    // i.fire("flash:white"),
-    i.fire("game:gameover"),
-    t &&
-      setTimeout(function () {
-        i.fire("game:audio", "Die");
-      }, 500);
   }),
 
   //
@@ -1429,6 +1516,22 @@ var Bird = pc.createScript("bird");
       // Reset the timer, but subtract the leftover time for accuracy
       this.timer -= this.actionSeconds;
     }
+  }),
+
+  (Bird.prototype.die = function (t) {
+    var i = this.app;
+    
+    this.rlondeath();
+    
+    (this.state = "dead"),
+    (this.entity.sprite.speed = 0),
+    i.fire("game:audio", "Hit"),
+    // i.fire("flash:white"),
+    i.fire("game:gameover"),
+    t &&
+      setTimeout(function () {
+        i.fire("game:audio", "Die");
+      }, 500);
   }),
 
   //
@@ -1476,7 +1579,7 @@ var Bird = pc.createScript("bird");
   //
   (Bird.prototype.updateNumIterations = function () {
     const dimElement = document.getElementById('iterid');
-    dimElement.textContent = `${this.iteration}`;
+    dimElement.textContent = `${this.iterations}`;
   }),
 
   //
@@ -1495,20 +1598,10 @@ var Bird = pc.createScript("bird");
   (Bird.prototype.updateCatGraphic = function (action) {
     const catElement = document.getElementById("cat");
     if (action === 1) {
-      setTimeout(
-        function () {
-            catElement.src = "assets/down.jpg";
-          },
-        this.actionFramerate
-      );
+      catElement.src = "assets/down.jpg";
     }
     else {
-      setTimeout(
-        function () {
-            catElement.src = "assets/up.jpg";
-          },
-        this.actionFramerate
-      );
+      catElement.src = "assets/up.jpg";
     }
   }),
 
