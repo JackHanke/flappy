@@ -2,7 +2,7 @@
 
 ![](./assets/flappytitle.gif)
 
-A vanilla policy gradient network that learns to play Flappy Bird, using [TensorFlow.js](https://www.tensorflow.org/js) and a [PlayCanvas](https://playcanvas.com/) implementation of the original game. bongocat assets from [here](https://github.com/kuroni/bongocat-osu/tree/master).
+A vanilla policy gradient network that learns to play Flappy Bird, using [TensorFlow.js](https://www.tensorflow.org/js) and a [PlayCanvas](https://playcanvas.com/) implementation of the original game. bongocat assets from [here](https://github.com/kuroni/bongocat-osu/tree/master). The tensorflow.js PPO implementation was modified from [this repo](https://github.com/zemlyansky/ppo-tfjs/tree/main).
 
 ## Dev Notes
 

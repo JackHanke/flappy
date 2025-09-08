@@ -930,9 +930,36 @@ Sparkle.attributes.add("radius", { type: "number", default: 1 }),
     );
 });
 
+const mean = data => {
+  if (data.length < 1) {
+    return;
+  }
+  return data.reduce((prev, current) => prev + current) / data.length;
+};
+
 function containsNaN(tensor) {
   return tf.any(tf.isNaN(tensor));
 }
+
+function scoreBuffer() {
+  this.reset();
+}
+
+(scoreBuffer.prototype.add = function (value){
+  if (value <= this.buff.length-1){
+    this.buff[value] += 1;
+  }
+  else{
+    while (this.buff.length !== value){
+      this.buff.push(0);
+    }
+    this.buff.push(1);
+  }
+}),
+(scoreBuffer.prototype.reset = function (){
+  this.buff = [];
+});
+
 
 // code modified from https://github.com/zemlyansky/ppo-tfjs/tree/main 
 
@@ -1013,7 +1040,7 @@ function Buffer() {
 
 // 
 
-function PPO () {
+function PPO (actor_path = null, critic_path = null) {
   // config  
   this.nEpochs = 10;
   this.policyLearningRate = 1e-3;
@@ -1025,45 +1052,47 @@ function PPO () {
   this.buffer = new Buffer()
 
   // Initialize models for actor and critic
-  this.input_dim = 3;
-  this.hidden_dim = 8;
-  // this.actor = tf.sequential({
-  // layers: [
-  //     tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: 2}),
-  //     ]
-  // });
-  // this.critic = tf.sequential({
-  // layers: [
-  //     tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-  //     tf.layers.dense({units: 1}),
-  // ]
-  // });
-  this.load();
-  
+  this.input_dim = 4;
+  this.hidden_dim = 16;
+
+  if (actor_path === null && critic_path === null) {
+    this.actor = tf.sequential({
+    layers: [
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: 2}),
+        ]
+    });
+    this.critic = tf.sequential({
+    layers: [
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({units: 1}),
+    ]
+    });
+  }
+  else {
+    this.load(actor_path, critic_path);
+  }
+
   // Initialize optimizers
   this.optPolicy = tf.train.adam(this.policyLearningRate)
   this.optValue = tf.train.adam(this.valueLearningRate)
 }
 
-(PPO.prototype.load = async function () {
-  // this.actor = tf.loadLayersModel('software/flappy/game/checkpoints/actor-34.json');
-  this.actor = await tf.loadLayersModel('./checkpoints/actor-34.json');
-  // this.critic = tf.loadLayersModel('software/flappy/game/checkpoints/critic-34.json');
-  this.critic = await tf.loadLayersModel('./checkpoints/critic-34.json');
+(PPO.prototype.load = async function (actor_path, critic_path) {
+  this.actor = await tf.loadLayersModel(actor_path);
+  this.critic = await tf.loadLayersModel(critic_path);
 
 }),
 
 (PPO.prototype.argmaxAction = function (observationT) {
   return tf.tidy(() => {
       const preds = tf.squeeze(this.actor.predict(observationT), 0)
-      console.log(`${preds} ${preds.shape}`)
       let action = tf.argMax(preds)      
       return [preds, action]
   })
@@ -1259,8 +1288,6 @@ function PPO () {
   Plotly.newPlot(plotDiv, [trace], layout);
 });
 
-
-
 // 
 var Bird = pc.createScript("bird");
   Bird.attributes.add("flapVelocity", { type: "number", default: 1 }),
@@ -1279,16 +1306,30 @@ var Bird = pc.createScript("bird");
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
   
-  this.ppo = new PPO();
+  this.mode = 'inference';
+  // this.mode = 'training';
+  if (this.mode === 'inference'){
+    this.ppo = new PPO(
+      './checkpoints/experiment2/actor-53.json',
+      './checkpoints/experiment2/critic-53.json'
+    );
+  }
+  else{
+    this.ppo = new PPO();
+  }
+
+  (this.scoreBuffer = new scoreBuffer),
 
   // DATA COLLECTION HYPERPARAMS
   // number of milli(seconds) each (state, action) pair is collected
-  (this.actionFramerate = 200),
+  (this.actionFramerate = 150),
   (this.actionSeconds = this.actionFramerate / 1000),
 
   // BUFFER CONFIG
   // number of games per iteration
-  (this.numGamesPerIteration = 200),
+  (this.numGamesPerIteration = 100),
+  // run a full inference-only trajectory every inferenceEvery games
+  (this.inferenceEvery = 20),
   
   // REWARD HYPERPARAMETERS
   // reward for surviving each frame
@@ -1298,7 +1339,7 @@ var Bird = pc.createScript("bird");
   // reward if the bird goes too high
   (this.tooHighReward = -0.5),
   // reward for dying
-  (this.deathReward = -3),
+  (this.deathReward = -5),
   
   // VALUE TRACKERS
   // cpu time since init, updated on bird.update, for deciding when to collect state data
@@ -1378,19 +1419,29 @@ var Bird = pc.createScript("bird");
 
     pipe1 = i.root.findByName("Pipe 1").getLocalPosition();
     pipe2 = i.root.findByName("Pipe 2").getLocalPosition();
+    pipe3= i.root.findByName("Pipe 3").getLocalPosition();
     ground = i.root.findByName("Ground").getLocalPosition();
     pipes = i.root.findByName("Pipes").getLocalPosition();
   
     // treadmill logic to get next pipe
-    if (this.birdScore === 0){next_pipe_height = pipe1.y;}
-    else if (this.birdScore === 1) {next_pipe_height = pipe2.y;}
-    else {next_pipe_height = pipe2.y;}
+    if (this.birdScore === 0){
+      next_pipe_height = pipe1.y;
+      next_next_pipe_height = pipe2.y;
+    }
+    else if (this.birdScore === 1) {
+      next_pipe_height = pipe2.y;
+      next_next_pipe_height = pipe3.y;
+    }
+    else {
+      next_pipe_height = pipe2.y;
+      next_next_pipe_height = pipe3.y;
+    }
 
     if (bird_y === undefined){
       bird_y = 1
     }
 
-    state_array = [bird_y, next_pipe_height, pipes.x];
+    state_array = [bird_y, next_pipe_height, next_next_pipe_height, pipes.x];
 
     return state_array
   }),
@@ -1404,10 +1455,12 @@ var Bird = pc.createScript("bird");
 
     const [preds, action, value, logits] = tf.tidy(() => {
       state = tf.tensor([state_array]);
-      // const lastObservationT = tf.tensor([this.lastObservation])
-      // const [predsT, actionT] = this.ppo.sampleAction(state)
-      const [predsT, actionT] = this.ppo.argmaxAction(state)
-      console.log(`> ${tf.softmax(predsT).arraySync()}`);
+      if ((this.games % this.inferenceEvery) === 0 || (this.mode === 'inference')) {
+        [predsT, actionT] = this.ppo.argmaxAction(state)
+      } else{
+        [predsT, actionT] = this.ppo.sampleAction(state)
+      }
+
       const valueT = this.ppo.critic.predict(state)
       const logprobabilityT = this.ppo.logProb(predsT, actionT)
       return [
@@ -1439,7 +1492,8 @@ var Bird = pc.createScript("bird");
         Game      : ${this.games}
         Pipes  .x : ${pipes.x}
         Bird   .y : ${bird_y}
-        NexPipe.y : ${next_pipe_height}
+        NPipe.y   : ${next_pipe_height}
+        NNPipe.y  : ${next_next_pipe_height}
         Reward    : ${this.reward}
         `
       );
@@ -1462,10 +1516,14 @@ var Bird = pc.createScript("bird");
   }),
 
   (Bird.prototype.rlondeath = function () {
-    // update games and scores
+    // update games
     this.games += 1;
     this.updateNumGames();
+    // update score tracking
     if (this.score > this.bestScore){this.bestScore = this.score;}
+    this.scoreBuffer.add(this.birdScore);
+    this.plotInferencePerformance(this.scoreBuffer.buff);
+
     
     // add death reward
     num_datapoints = this.ppo.buffer.rewardBuffer.length
@@ -1476,33 +1534,77 @@ var Bird = pc.createScript("bird");
 
     // if the end of an iteration, train and reset
     if ((this.games % this.numGamesPerIteration) === 0){
-      console.log(`Training on ${num_datapoints} datapoints`)
+      console.log(`Iteration ${this.iterations} mean reward: ${mean(this.ppo.buffer.rewardBuffer)}`)
+      console.log(`Iteration ${this.iterations}: training on ${num_datapoints} datapoints.`)
+      
+      
       // train
-      
-      // console.log(`obs Nan : ${containsNaN(this.ppo.buffer.observationBuffer)}`)
-      // console.log(`actions Nan : ${containsNaN(this.ppo.buffer.actionBuffer)}`)
-      // console.log(`reward Nan : ${containsNaN(this.ppo.buffer.rewardBuffer)}`)
-      // console.log(`returns Nan : ${containsNaN(this.ppo.buffer.returnBuffer)}`)
-      // console.log(`adv Nan : ${containsNaN(this.ppo.buffer.advantageBuffer)}`)
-      // console.log(`reward Nan : ${this.ppo.buffer.rewardBuffer}`)
-      
-      // console.log(`actor weights before training ${containsNaN(this.ppo.actor.layers[0].getWeights()[0])}`)
-      // console.log(`critic weights before training ${containsNaN(this.ppo.critic.layers[0].getWeights()[0])}`)
-      this.ppo.train(this.iterations);
-      // console.log(`actor weights after training ${containsNaN(this.ppo.actor.layers[0].getWeights()[0])}`)
-      if (containsNaN(this.ppo.actor.layers[0].getWeights()[0]) == true) {
-        console.log(`NaN Weights!`);
+      if (this.mode === 'training'){
+        this.ppo.train(this.iterations);
+        if (containsNaN(this.ppo.actor.layers[0].getWeights()[0]) == true) {
+          console.log(`### NaN Weights! ###`);
+        }
+        // increment iterations, reset game counter
+        this.iterations += 1;
+        this.updateNumIterations();
+        this.games = 0;
+        // reset buffer and trackers
+        
+        this.ppo.plotWeights();
       }
-      // increment iterations, reset game counter
-      this.iterations += 1;
-      this.updateNumIterations();
-      this.games = 0;
-      // reset buffer and trackers
+      
       this.ppo.buffer.reset();
       this.rlreset();
-
-      this.ppo.plotWeights();
     }
+  }),
+
+  // 
+  (Bird.prototype.plotInferencePerformance = function (dataArray) {
+    const trace1 = {
+        x: dataArray.map((_, index) => index), // Create an array of indices [0, 1, 2, 3, ...]
+        y: dataArray,
+        type: 'bar',
+        marker: {
+            color: 'rgb(123, 197, 205)'
+        }
+    };
+
+    const data = [trace1];
+
+    // Define the layout of the graph.
+    const layout = {
+      title: 'Bar Graph of Array Data',
+      xaxis: {
+        title: 'Array Index',
+        showgrid: false,
+      },
+      yaxis: {
+        title: 'Value',
+        showgrid: true,
+      },
+
+    // xaxis: {
+    //     visible: false,
+    //     showgrid: false,
+    //     zeroline: false,
+    //     showticklabels: false,
+    // },
+    // yaxis: {
+    //     visible: false,
+    //     showgrid: false,
+    //     zeroline: false,
+    //     showticklabels: false,
+    // },
+      margin: {
+        b: 20,
+        l: 20,
+        r: 30,
+        t: 0,
+      }
+    };
+
+    // Render the plot in the 'myDiv' container.
+    Plotly.newPlot('perfBar', data, layout);
   }),
 
   //
