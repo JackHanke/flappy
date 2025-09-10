@@ -1052,7 +1052,7 @@ function PPO (actor_path = null, critic_path = null) {
   this.buffer = new Buffer()
 
   // Initialize models for actor and critic
-  this.input_dim = 4;
+  this.input_dim = 6;
   this.hidden_dim = 16;
 
   if (actor_path === null && critic_path === null) {
@@ -1206,7 +1206,6 @@ function PPO (actor_path = null, critic_path = null) {
   
 
   for (let i = 0; i < this.nEpochs; i++) {
-    console.log(`Epoch ${i} starting...`)
     const kl = this.trainPolicy(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT)
     if (kl > 1.5 * this.targetKL) {
       console.log(`[PPO] Training ended early at Epoch ${i}/${this.nEpochs}`)
@@ -1261,7 +1260,7 @@ function PPO (actor_path = null, critic_path = null) {
       showscale: false
   };
 
-  const plotDiv = document.getElementById('weightsPlot');
+  const plotDiv = document.getElementById('thoughtPlot');
 
   const layout = {
       title: 'TensorFlow.js Tensor Heatmap',
@@ -1306,12 +1305,13 @@ var Bird = pc.createScript("bird");
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
   
-  this.mode = 'inference';
+  this.mode = 'training';
+  this.fromScratch = true;
   // this.mode = 'training';
-  if (this.mode === 'inference'){
+  if (this.fromScratch === false){
     this.ppo = new PPO(
-      './checkpoints/experiment2/actor-53.json',
-      './checkpoints/experiment2/critic-53.json'
+      './checkpoints/experiment3/actor-41.json',
+      './checkpoints/experiment3/critic-41.json'
     );
   }
   else{
@@ -1340,6 +1340,9 @@ var Bird = pc.createScript("bird");
   (this.tooHighReward = -0.5),
   // reward for dying
   (this.deathReward = -5),
+
+  // scale velocity value for value consistency
+  (this.velocity_scale = 4),
   
   // VALUE TRACKERS
   // cpu time since init, updated on bird.update, for deciding when to collect state data
@@ -1362,8 +1365,15 @@ var Bird = pc.createScript("bird");
   // initial plotting
   (this.updateNumIterations()),
   (this.updateNumGames()),
-  (this.updateBestScore()),
-  (this.ppo.plotWeights()),
+  (this.updateBestScore());
+
+  // if (this.mode === 'inference'){
+  //   this.plotInferencePerformance();
+  // }
+  if (this.mode === 'training'){
+    this.ppo.plotWeights();
+  }
+
 
   t.on(
     "game:addscore",
@@ -1441,7 +1451,20 @@ var Bird = pc.createScript("bird");
       bird_y = 1
     }
 
-    state_array = [bird_y, next_pipe_height, next_next_pipe_height, pipes.x];
+    // 
+    isPastOne = 0;
+    if (this.birdScore > 0.9){
+      isPastOne = 1;
+    }
+
+    state_array = [
+      bird_y, 
+      this.velocity/this.velocity_scale, 
+      next_pipe_height, 
+      next_next_pipe_height, 
+      pipes.x, 
+      isPastOne
+    ];
 
     return state_array
   }),
@@ -1486,17 +1509,19 @@ var Bird = pc.createScript("bird");
       logits
     );
 
-    verbose = false
+    verbose = false;
     if (verbose == true) {
-      console.log(`
-        Game      : ${this.games}
-        Pipes  .x : ${pipes.x}
-        Bird   .y : ${bird_y}
-        NPipe.y   : ${next_pipe_height}
-        NNPipe.y  : ${next_next_pipe_height}
-        Reward    : ${this.reward}
-        `
-      );
+      console.log(state_array)
+      // console.log(`
+      //   Game      : ${this.games}
+      //   Pipes  .x : ${pipes.x}
+      //   Bird   .y : ${bird_y}
+      //   Bird  vel : ${this.velocity}
+      //   NPipe.y   : ${next_pipe_height}
+      //   NNPipe.y  : ${next_next_pipe_height}
+      //   Reward    : ${this.reward}
+      //   `
+      // );
     }
 
     // take action
@@ -1522,7 +1547,9 @@ var Bird = pc.createScript("bird");
     // update score tracking
     if (this.score > this.bestScore){this.bestScore = this.score;}
     this.scoreBuffer.add(this.birdScore);
-    this.plotInferencePerformance(this.scoreBuffer.buff);
+    if (this.mode === 'inference') {
+      this.plotInferencePerformance(this.scoreBuffer.buff);
+    }
 
     
     // add death reward
@@ -1535,11 +1562,10 @@ var Bird = pc.createScript("bird");
     // if the end of an iteration, train and reset
     if ((this.games % this.numGamesPerIteration) === 0){
       console.log(`Iteration ${this.iterations} mean reward: ${mean(this.ppo.buffer.rewardBuffer)}`)
-      console.log(`Iteration ${this.iterations}: training on ${num_datapoints} datapoints.`)
-      
       
       // train
       if (this.mode === 'training'){
+        console.log(`Iteration ${this.iterations}: training on ${num_datapoints} datapoints.`)
         this.ppo.train(this.iterations);
         if (containsNaN(this.ppo.actor.layers[0].getWeights()[0]) == true) {
           console.log(`### NaN Weights! ###`);
@@ -1604,7 +1630,7 @@ var Bird = pc.createScript("bird");
     };
 
     // Render the plot in the 'myDiv' container.
-    Plotly.newPlot('perfBar', data, layout);
+    Plotly.newPlot('thoughtPlot', data, layout);
   }),
 
   //
