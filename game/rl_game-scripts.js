@@ -1305,13 +1305,14 @@ var Bird = pc.createScript("bird");
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
   
-  this.mode = 'training';
-  this.fromScratch = true;
+  // this.mode = 'training';
+  this.mode = 'inference';
+  this.fromScratch = false;
   // this.mode = 'training';
   if (this.fromScratch === false){
     this.ppo = new PPO(
-      './checkpoints/experiment3/actor-41.json',
-      './checkpoints/experiment3/critic-41.json'
+      './checkpoints/5/actor-61.json',
+      './checkpoints/5/critic-61.json'
     );
   }
   else{
