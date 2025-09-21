@@ -1042,7 +1042,7 @@ function Buffer() {
 
 function PPO (actor_path = null, critic_path = null) {
   // config  
-  this.nEpochs = 10;
+  this.nEpochs = 15;
   this.policyLearningRate = 1e-3;
   this.valueLearningRate = 1e-3;
   this.clipRatio = 0.2;
@@ -1052,8 +1052,9 @@ function PPO (actor_path = null, critic_path = null) {
   this.buffer = new Buffer()
 
   // Initialize models for actor and critic
-  this.input_dim = 6;
+  this.input_dim = 7;
   this.hidden_dim = 16;
+  // this.lambda = 0.01;
 
   if (actor_path === null && critic_path === null) {
     this.actor = tf.sequential({
@@ -1127,7 +1128,42 @@ function PPO (actor_path = null, critic_path = null) {
   return this.actor.predict(observation)
 }),
 
+// PPO objective
+// (PPO.prototype.trainPolicy = function(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT) {
+//   const optFunc = () => {
+//     const predsT = this.actor.predict(observationBufferT) // -> Logits or means
+//     const diffT = tf.sub(
+//         this.logProb(predsT, actionBufferT),
+//         logprobabilityBufferT
+//     )
 
+//     const ratioT = tf.exp(diffT)
+//     // console.log(`logprob : ${this.logProb(predsT, actionBufferT)} predsT: ${predsT} diffT: ${diffT} ratioT: ${ratioT}`)
+//     // console.log(`logprob : ${this.logProb(predsT, actionBufferT)}`)
+//     const minAdvantageT = tf.where(
+//         tf.greater(advantageBufferT, 0),
+//         tf.mul(tf.add(1, this.clipRatio), advantageBufferT),
+//         tf.mul(tf.sub(1, this.clipRatio), advantageBufferT)
+//     )
+//     const policyLoss = tf.neg(tf.mean(
+//         tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)
+//     ))
+//     // console.log(`policy loss: ${policyLoss} min  ${tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)}`)
+//     return policyLoss
+//   }
+
+//   return tf.tidy(() => {
+//       const {values, grads} = this.optPolicy.computeGradients(optFunc)
+//       this.optPolicy.applyGradients(grads)
+//       const kl = tf.mean(tf.sub(
+//           logprobabilityBufferT,
+//           this.logProb(this.actor.predict(observationBufferT), actionBufferT)
+//       ))
+//       return kl.arraySync()
+//   })
+// }),
+
+// SPO objective
 (PPO.prototype.trainPolicy = function(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT) {
   const optFunc = () => {
     const predsT = this.actor.predict(observationBufferT) // -> Logits or means
@@ -1135,19 +1171,12 @@ function PPO (actor_path = null, critic_path = null) {
         this.logProb(predsT, actionBufferT),
         logprobabilityBufferT
     )
-
     const ratioT = tf.exp(diffT)
-    // console.log(`logprob : ${this.logProb(predsT, actionBufferT)} predsT: ${predsT} diffT: ${diffT} ratioT: ${ratioT}`)
-    // console.log(`logprob : ${this.logProb(predsT, actionBufferT)}`)
-    const minAdvantageT = tf.where(
-        tf.greater(advantageBufferT, 0),
-        tf.mul(tf.add(1, this.clipRatio), advantageBufferT),
-        tf.mul(tf.sub(1, this.clipRatio), advantageBufferT)
-    )
-    const policyLoss = tf.neg(tf.mean(
-        tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)
-    ))
-    // console.log(`policy loss: ${policyLoss} min  ${tf.minimum(tf.mul(ratioT, advantageBufferT), minAdvantageT)}`)
+
+    const term1 = tf.mul(ratioT, advantageBufferT)
+    const term2 = tf.mul(tf.abs(advantageBufferT).mul(1/(2*this.clipRatio)), tf.square(tf.sub(ratioT, 1)))
+
+    const policyLoss = tf.neg(tf.mean(tf.sub(term1, term2))) // why not tf.neg ?
     return policyLoss
   }
 
@@ -1208,7 +1237,7 @@ function PPO (actor_path = null, critic_path = null) {
   for (let i = 0; i < this.nEpochs; i++) {
     const kl = this.trainPolicy(observationBufferT, actionBufferT, logprobabilityBufferT, advantageBufferT)
     if (kl > 1.5 * this.targetKL) {
-      console.log(`[PPO] Training ended early at Epoch ${i}/${this.nEpochs}`)
+      console.log(`[SPO] Training ended early at Epoch ${i}/${this.nEpochs}`)
       break
     }
   }
@@ -1232,11 +1261,11 @@ function PPO (actor_path = null, critic_path = null) {
   // save actor
   var path = `actor-${iteration}-${String(new Date())}`;
   await this.actor.save(`downloads://${path}`);
-  console.log(`[PPO] Actor saved at: ${path} ###`);
+  // console.log(`[SPO] Actor saved at: ${path} ###`);
   // save critic
   var path = `critic-${iteration}-${String(new Date())}`;
   await this.critic.save(`downloads://${path}`);
-  console.log(`[PPO] Critic saved at: ${path} ###`);
+  // console.log(`[SPO] Critic saved at: ${path} ###`);
 }),
 
 // 
@@ -1305,9 +1334,9 @@ var Bird = pc.createScript("bird");
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
   
-  // this.mode = 'training';
-  this.mode = 'inference';
-  this.fromScratch = false;
+  this.mode = 'training';
+  // this.mode = 'inference';
+  this.fromScratch = true;
   // this.mode = 'training';
   if (this.fromScratch === false){
     this.ppo = new PPO(
@@ -1323,7 +1352,7 @@ var Bird = pc.createScript("bird");
 
   // DATA COLLECTION HYPERPARAMS
   // number of milli(seconds) each (state, action) pair is collected
-  (this.actionFramerate = 150),
+  (this.actionFramerate = 200),
   (this.actionSeconds = this.actionFramerate / 1000),
 
   // BUFFER CONFIG
@@ -1436,14 +1465,12 @@ var Bird = pc.createScript("bird");
   
     // treadmill logic to get next pipe
     if (this.birdScore === 0){
+      previous_pipe = 0.5;
       next_pipe_height = pipe1.y;
       next_next_pipe_height = pipe2.y;
     }
-    else if (this.birdScore === 1) {
-      next_pipe_height = pipe2.y;
-      next_next_pipe_height = pipe3.y;
-    }
     else {
+      previous_pipe = pipe1.y;
       next_pipe_height = pipe2.y;
       next_next_pipe_height = pipe3.y;
     }
@@ -1461,11 +1488,13 @@ var Bird = pc.createScript("bird");
     state_array = [
       bird_y, 
       this.velocity/this.velocity_scale, 
-      next_pipe_height, 
+      previous_pipe,
+      next_pipe_height,
       next_next_pipe_height, 
       pipes.x, 
       isPastOne
     ];
+    // next_next_pipe_height, 
 
     return state_array
   }),
@@ -1512,17 +1541,19 @@ var Bird = pc.createScript("bird");
 
     verbose = false;
     if (verbose == true) {
-      console.log(state_array)
-      // console.log(`
-      //   Game      : ${this.games}
-      //   Pipes  .x : ${pipes.x}
-      //   Bird   .y : ${bird_y}
-      //   Bird  vel : ${this.velocity}
-      //   NPipe.y   : ${next_pipe_height}
-      //   NNPipe.y  : ${next_next_pipe_height}
-      //   Reward    : ${this.reward}
-      //   `
-      // );
+      // console.log(state_array)
+      console.log(`
+        Game      : ${this.games}
+        Reward    : ${this.reward}
+        Pipes  .x : ${pipes.x}
+        NPipe.y   : ${next_pipe_height}
+        Bird   .y : ${bird_y}
+        BirdvTop  : ${bird_y-next_pipe_height}
+        `
+        // Bird vBot : ${bird_y-(next_pipe_height)}
+        // Bird  vel : ${this.velocity}
+        // NNPipe.y  : ${next_next_pipe_height}
+      );
     }
 
     // take action
@@ -1562,11 +1593,11 @@ var Bird = pc.createScript("bird");
 
     // if the end of an iteration, train and reset
     if ((this.games % this.numGamesPerIteration) === 0){
-      console.log(`Iteration ${this.iterations} mean reward: ${mean(this.ppo.buffer.rewardBuffer)}`)
+      console.log(`Iteration ${this.iterations} mean return: ${mean(this.ppo.buffer.returnBuffer)}`)
       
       // train
       if (this.mode === 'training'){
-        console.log(`Iteration ${this.iterations}: training on ${num_datapoints} datapoints.`)
+        // console.log(`Iteration ${this.iterations}: training on ${num_datapoints} datapoints.`)
         this.ppo.train(this.iterations);
         if (containsNaN(this.ppo.actor.layers[0].getWeights()[0]) == true) {
           console.log(`### NaN Weights! ###`);
