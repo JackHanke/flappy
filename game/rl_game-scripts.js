@@ -1042,9 +1042,9 @@ function Buffer() {
 
 function PPO (actor_path = null, critic_path = null) {
   // config  
-  this.nEpochs = 15;
-  this.policyLearningRate = 1e-3;
-  this.valueLearningRate = 1e-3;
+  this.nEpochs = 10;
+  this.policyLearningRate = 1e-4;
+  this.valueLearningRate = 1e-4;
   this.clipRatio = 0.2;
   this.targetKL = 0.01;
 
@@ -1052,26 +1052,24 @@ function PPO (actor_path = null, critic_path = null) {
   this.buffer = new Buffer()
 
   // Initialize models for actor and critic
-  this.input_dim = 7;
-  this.hidden_dim = 16;
+  this.input_dim = 4;
+  this.hidden_dim = 32;
   // this.lambda = 0.01;
 
   if (actor_path === null && critic_path === null) {
     this.actor = tf.sequential({
     layers: [
-        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2()}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2()}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2()}),
         tf.layers.dense({units: 2}),
         ]
     });
     this.critic = tf.sequential({
     layers: [
-        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
-        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2({l2: this.lambda})}),
+        tf.layers.dense({inputShape: [this.input_dim], units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2()}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2()}),
+        tf.layers.dense({units: this.hidden_dim, activation: 'elu', kernelRegularizer: tf.regularizers.l2()}),
         tf.layers.dense({units: 1}),
     ]
     });
@@ -1334,14 +1332,14 @@ var Bird = pc.createScript("bird");
   (this.initialRot = this.entity.getRotation().clone()),
   (this.pipes = t.root.findByTag("pipe"));
   
-  this.mode = 'training';
-  // this.mode = 'inference';
-  this.fromScratch = true;
+  // this.mode = 'training';
+  this.mode = 'inference';
+  this.fromScratch = false;
   // this.mode = 'training';
   if (this.fromScratch === false){
     this.ppo = new PPO(
-      './checkpoints/5/actor-61.json',
-      './checkpoints/5/critic-61.json'
+      './checkpoints/spo/4/actor-274.json',
+      './checkpoints/spo/4/critic-0.json'
     );
   }
   else{
@@ -1352,12 +1350,12 @@ var Bird = pc.createScript("bird");
 
   // DATA COLLECTION HYPERPARAMS
   // number of milli(seconds) each (state, action) pair is collected
-  (this.actionFramerate = 200),
+  (this.actionFramerate = 50),
   (this.actionSeconds = this.actionFramerate / 1000),
 
   // BUFFER CONFIG
-  // number of games per iteration
-  (this.numGamesPerIteration = 100),
+  // number of games per training iteration
+  (this.numGamesPerIteration = 20),
   // run a full inference-only trajectory every inferenceEvery games
   (this.inferenceEvery = 20),
   
@@ -1367,9 +1365,9 @@ var Bird = pc.createScript("bird");
   // reward for successfully passing though the pipe, aka getting a point
   (this.pipeReward = 1),
   // reward if the bird goes too high
-  (this.tooHighReward = -0.5),
+  (this.tooHighReward = -0.1),
   // reward for dying
-  (this.deathReward = -5),
+  (this.deathReward = -1.5),
 
   // scale velocity value for value consistency
   (this.velocity_scale = 4),
@@ -1486,11 +1484,12 @@ var Bird = pc.createScript("bird");
     }
 
     state_array = [
-      bird_y, 
+      // bird_y, 
       this.velocity/this.velocity_scale, 
-      previous_pipe,
-      next_pipe_height,
-      next_next_pipe_height, 
+      // previous_pipe,
+      // next_pipe_height,
+      // next_next_pipe_height, 
+      bird_y - next_pipe_height,
       pipes.x, 
       isPastOne
     ];
