@@ -17,9 +17,3 @@ python3 -m http.server
 ```
 
 and open `http://localhost:8000/rl.html` in your browser.
-
-## Blurb
-
-I created a policy optimization agent to play the #1 mobile game of 2014, Flappy Bird! The agent (AKA the cat) learns to adjust its behavior to get a higher score. I used a brand new technique in deep reinforcement learning called simple policy optimization to create the cat's brain.
-
-This project was made in Javascript with Tensorflow.js. The source for training, along with the 12KB file of the cat's brain, can be found here: https://github.com/JackHanke/flappy
